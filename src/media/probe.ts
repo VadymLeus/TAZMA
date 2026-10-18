@@ -1,23 +1,14 @@
-// Reading information about a media file. This module has no UI code: the
-// export core will reuse it in later stages.
-
+// src/media/probe.ts
 import { ALL_FORMATS, BlobSource, EncodedPacketSink, Input } from 'mediabunny'
 
 export interface VideoTrackInfo {
-  /** Mediabunny codec name, for example `avc`, `hevc`, `vp9`, `av1`. */
   codec: string | null
-  /** Codec parameter string, for example `avc1.640028`. */
   codecString: string | null
-  /** Display size in pixels, with rotation already applied. */
   width: number
   height: number
-  /** Rotation in degrees: 0, 90, 180 or 270. */
   rotation: number
-  /** Average frame rate, frames per second. */
   frameRate: number
-  /** Average bitrate, bits per second. */
   bitrate: number | null
-  /** Total number of video packets, which equals the number of frames. */
   frameCount: number
 }
 
@@ -32,10 +23,8 @@ export interface AudioTrackInfo {
 export interface MediaInfo {
   fileName: string
   fileSize: number
-  /** Container name, for example `MP4`, `Matroska`, `WebM`. */
   format: string
   mimeType: string
-  /** Duration in seconds. */
   duration: number
   video: VideoTrackInfo | null
   audio: AudioTrackInfo | null
@@ -44,12 +33,9 @@ export interface MediaInfo {
 }
 
 export interface KeyframeInfo {
-  /** Presentation times of key frames in seconds, ascending. */
   timestamps: number[]
   count: number
-  /** Average distance between neighbouring key frames, seconds. */
   averageInterval: number | null
-  /** Largest distance between neighbouring key frames, seconds. */
   maxInterval: number | null
 }
 
@@ -57,7 +43,6 @@ function openInput(file: File): Input {
   return new Input({ formats: ALL_FORMATS, source: new BlobSource(file) })
 }
 
-/** Reads container, duration and the primary video and audio tracks. */
 export async function probeFile(file: File): Promise<MediaInfo> {
   const input = openInput(file)
   try {
@@ -87,8 +72,7 @@ export async function probeFile(file: File): Promise<MediaInfo> {
 
     let audio: AudioTrackInfo | null = null
     if (audioTrack) {
-      // An estimate from the first packets is enough for the bitrate and
-      // keeps long files fast to open.
+      // An estimate from the first packets is enough and keeps long files fast.
       const stats = await audioTrack.computePacketStats(1000)
       audio = {
         codec: await audioTrack.getCodec(),
@@ -115,11 +99,7 @@ export async function probeFile(file: File): Promise<MediaInfo> {
   }
 }
 
-/**
- * Finds the key frames of the primary video track without reading frame data
- * (packet metadata only). Returns `null` when the file has no video track or
- * when `signal` is aborted before the scan ends.
- */
+// Reads packet metadata only; returns null without video or when aborted.
 export async function scanKeyframes(
   file: File,
   signal?: AbortSignal,

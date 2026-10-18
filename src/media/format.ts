@@ -1,5 +1,4 @@
-// Display helpers for media information (UI strings are in Ukrainian).
-
+// src/media/format.ts
 export function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes < 0) return '—'
   if (bytes < 1024) return `${bytes} Б`
@@ -13,7 +12,6 @@ export function formatBytes(bytes: number): string {
   return `${value >= 100 ? value.toFixed(0) : value.toFixed(1)} ${units[unit]}`
 }
 
-/** `m:ss.mmm`, or `h:mm:ss.mmm` for durations of an hour or more. */
 export function formatDuration(seconds: number): string {
   if (!Number.isFinite(seconds) || seconds < 0) return '—'
   const totalMs = Math.round(seconds * 1000)
