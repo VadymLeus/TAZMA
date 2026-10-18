@@ -1,3 +1,4 @@
+// src/components/KeyframeStrip.tsx
 import { formatDuration, formatSeconds } from '../media/format.ts'
 import type { KeyframeInfo } from '../media/probe.ts'
 
@@ -5,9 +6,7 @@ const STRIP_WIDTH = 1000
 
 interface KeyframeStripProps {
   keyframes: KeyframeInfo
-  /** Total duration in seconds, used to place key frames along the strip. */
   duration: number
-  /** Number of video frames, used to express the interval in frames. */
   frameCount: number
 }
 

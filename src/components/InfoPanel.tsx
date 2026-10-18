@@ -1,3 +1,4 @@
+// src/components/InfoPanel.tsx
 import {
   codecLabel,
   formatBitrate,

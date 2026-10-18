@@ -1,13 +1,13 @@
+// src/components/DropZone.tsx
 import { useState } from 'react'
 import type { ChangeEvent, DragEvent } from 'react'
 
 interface DropZoneProps {
-  onFile: (file: File) => void
-  /** Smaller variant shown once a file is already open. */
+  onFiles: (files: File[]) => void
   compact?: boolean
 }
 
-export default function DropZone({ onFile, compact = false }: DropZoneProps) {
+export default function DropZone({ onFiles, compact = false }: DropZoneProps) {
   const [dragging, setDragging] = useState(false)
 
   function handleDragOver(event: DragEvent<HTMLLabelElement>) {
@@ -19,15 +19,14 @@ export default function DropZone({ onFile, compact = false }: DropZoneProps) {
   function handleDrop(event: DragEvent<HTMLLabelElement>) {
     event.preventDefault()
     setDragging(false)
-    const file = event.dataTransfer.files[0]
-    if (file) onFile(file)
+    const files = Array.from(event.dataTransfer.files)
+    if (files.length > 0) onFiles(files)
   }
 
   function handleChange(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0]
-    if (file) onFile(file)
-    // Allow choosing the same file again.
+    const files = Array.from(event.target.files ?? [])
     event.target.value = ''
+    if (files.length > 0) onFiles(files)
   }
 
   const className = [
@@ -47,15 +46,16 @@ export default function DropZone({ onFile, compact = false }: DropZoneProps) {
     >
       <input
         type="file"
+        multiple
         accept="video/*,.mkv,.webm,.mp4,.m4v,.mov"
         onChange={handleChange}
       />
       {compact ? (
-        <span>Відкрити інший файл</span>
+        <span>Додати файли</span>
       ) : (
         <>
-          <strong>Перетягніть відеофайл сюди</strong>
-          <span>або натисніть, щоб вибрати його на комп'ютері</span>
+          <strong>Перетягніть відеофайли сюди</strong>
+          <span>або натисніть, щоб вибрати їх на комп'ютері</span>
           <span className="hint">MP4, WebM, MKV, MOV</span>
         </>
       )}
