@@ -61,3 +61,8 @@ export function codecLabel(codec: string | null): string {
   if (codec === null) return 'невідомий'
   return CODEC_LABELS[codec] ?? codec.toUpperCase()
 }
+
+export function formatSpan(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds < 0) return '—'
+  return `${seconds.toFixed(1).replace('.', ',')} с`
+}

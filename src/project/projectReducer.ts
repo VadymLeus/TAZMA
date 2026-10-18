@@ -1,11 +1,20 @@
 // src/project/projectReducer.ts
+import { clampAmount } from './effects.ts'
+import {
+  fitTexts,
+  newText,
+  removeText,
+  updateText,
+} from './texts.ts'
+import type { TextPatch } from './texts.ts'
 import {
   moveClip,
   removeClip,
   removeSourceClips,
   splitAt,
+  timelineDuration,
 } from './timeline.ts'
-import type { Clip, ProjectState, Source } from './types.ts'
+import type { Clip, Effect, ProjectState, Source } from './types.ts'
 
 export type ProjectAction =
   | { type: 'addSource'; source: Source; clipId: string }
@@ -16,16 +25,31 @@ export type ProjectAction =
   | { type: 'split'; time: number; newId: string }
   | { type: 'deleteSelected' }
   | { type: 'moveSelected'; delta: -1 | 1 }
+  | { type: 'setEffect'; clipId: string; effect: Effect | null }
+  | { type: 'addText'; textId: string; time: number }
+  | { type: 'selectText'; textId: string | null }
+  | { type: 'updateText'; textId: string; patch: TextPatch }
 
 export const initialProject: ProjectState = {
   sources: [],
   clips: [],
+  texts: [],
   selectedClipId: null,
+  selectedTextId: null,
   activeSourceId: null,
 }
 
 function wholeClip(source: Source, clipId: string): Clip {
   return { id: clipId, sourceId: source.id, start: 0, end: source.info.duration }
+}
+
+// Captions follow the timeline length; a selected caption that was dropped is deselected.
+function withFittedTexts(state: ProjectState, clips: Clip[]): ProjectState {
+  const texts = fitTexts(state.texts, timelineDuration(clips))
+  const selectedTextId = texts.some((t) => t.id === state.selectedTextId)
+    ? state.selectedTextId
+    : null
+  return { ...state, clips, texts, selectedTextId }
 }
 
 export function projectReducer(
@@ -52,6 +76,7 @@ export function projectReducer(
         ...state,
         clips: [...state.clips, wholeClip(source, action.clipId)],
         selectedClipId: action.clipId,
+        selectedTextId: null,
         activeSourceId: source.id,
       }
     }
@@ -60,8 +85,8 @@ export function projectReducer(
       const clips = removeSourceClips(state.clips, action.sourceId)
       const sources = state.sources.filter((s) => s.id !== action.sourceId)
       return {
+        ...withFittedTexts(state, clips),
         sources,
-        clips,
         selectedClipId: clips.some((c) => c.id === state.selectedClipId)
           ? state.selectedClipId
           : null,
@@ -80,6 +105,7 @@ export function projectReducer(
       return {
         ...state,
         selectedClipId: clip ? clip.id : null,
+        selectedTextId: null,
         activeSourceId: clip ? clip.sourceId : state.activeSourceId,
       }
     }
@@ -87,14 +113,25 @@ export function projectReducer(
     case 'split': {
       const result = splitAt(state.clips, action.time, action.newId)
       if (!result) return state
-      return { ...state, clips: result.clips, selectedClipId: result.rightId }
+      return {
+        ...state,
+        clips: result.clips,
+        selectedClipId: result.rightId,
+        selectedTextId: null,
+      }
     }
 
     case 'deleteSelected':
+      if (state.selectedTextId) {
+        return {
+          ...state,
+          texts: removeText(state.texts, state.selectedTextId),
+          selectedTextId: null,
+        }
+      }
       if (!state.selectedClipId) return state
       return {
-        ...state,
-        clips: removeClip(state.clips, state.selectedClipId),
+        ...withFittedTexts(state, removeClip(state.clips, state.selectedClipId)),
         selectedClipId: null,
       }
 
@@ -103,6 +140,51 @@ export function projectReducer(
       return {
         ...state,
         clips: moveClip(state.clips, state.selectedClipId, action.delta),
+      }
+
+    case 'setEffect': {
+      if (!state.clips.some((c) => c.id === action.clipId)) return state
+      return {
+        ...state,
+        clips: state.clips.map((clip) => {
+          if (clip.id !== action.clipId) return clip
+          const { effect: _previous, ...rest } = clip
+          if (!action.effect) return rest
+          const amount = clampAmount(action.effect.amount)
+          return { ...rest, effect: { ...action.effect, amount } }
+        }),
+      }
+    }
+
+    case 'addText': {
+      const text = newText(action.textId, action.time, timelineDuration(state.clips))
+      if (!text) return state
+      return {
+        ...state,
+        texts: [...state.texts, text],
+        selectedTextId: text.id,
+        selectedClipId: null,
+      }
+    }
+
+    case 'selectText': {
+      const text = state.texts.find((t) => t.id === action.textId)
+      return {
+        ...state,
+        selectedTextId: text ? text.id : null,
+        selectedClipId: text ? null : state.selectedClipId,
+      }
+    }
+
+    case 'updateText':
+      return {
+        ...state,
+        texts: updateText(
+          state.texts,
+          action.textId,
+          action.patch,
+          timelineDuration(state.clips),
+        ),
       }
   }
 }

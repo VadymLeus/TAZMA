@@ -58,7 +58,7 @@ export function splitAt(
   }
   const cut = clip.start + location.offset
   const left: Clip = { ...clip, end: cut }
-  const right: Clip = { id: newId, sourceId: clip.sourceId, start: cut, end: clip.end }
+  const right: Clip = { ...clip, id: newId, start: cut }
   return {
     clips: [
       ...clips.slice(0, location.index),
