@@ -11,11 +11,13 @@ const PREFERRED_VIDEO: Record<Container, VideoCodec> = { mp4: 'avc', webm: 'vp9'
 const PREFERRED_AUDIO: Record<Container, AudioCodec> = { mp4: 'aac', webm: 'opus' }
 
 export const defaultSettings: ExportSettings = {
+  mode: 'selective',
   container: 'mp4',
   videoCodec: PREFERRED_VIDEO.mp4,
   audioCodec: PREFERRED_AUDIO.mp4,
   quality: 'medium',
   height: null,
+  ignoreColor: false,
 }
 
 // Containers in which at least one video codec can be encoded here.

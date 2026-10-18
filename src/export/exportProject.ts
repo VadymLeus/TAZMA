@@ -1,84 +1,33 @@
 // src/export/exportProject.ts
 import {
-  ALL_FORMATS,
-  AudioSample,
-  AudioSampleSink,
   AudioSampleSource,
-  BlobSource,
-  BufferTarget,
   CanvasSource,
-  Input,
   Output,
   Quality,
   VideoSampleSink,
 } from 'mediabunny'
-import type { InputAudioTrack, InputVideoTrack, VideoSample } from 'mediabunny'
+import type { AudioSample, VideoSample } from 'mediabunny'
 import { frameSize } from '../project/frame.ts'
 import { timelineDuration } from '../project/timeline.ts'
-import type { ProjectState, Source } from '../project/types.ts'
-import { silenceChunks, trimWindow } from './audio.ts'
-import type { TrimWindow } from './audio.ts'
-import { remixToStereo, resampleLinear } from './audioFormat.ts'
 import { createFormat } from './codecs.ts'
+import { createSink } from './sink.ts'
+import type { ResultSink } from './sink.ts'
 import { composeFrame } from './compose.ts'
 import { outputSize } from './geometry.ts'
 import { mergeByTime } from './merge.ts'
 import { buildSegments } from './plan.ts'
 import type { Segment } from './plan.ts'
+import { FALLBACK_FRAME, MIN_FRAME, audioItems, openProject } from './shared.ts'
+import type { AudioItem } from './shared.ts'
 import { ExportAborted } from './types.ts'
-import type { ExportOptions, ExportResult, ExportSettings } from './types.ts'
+import type { ExportOptions, ExportProject, ExportResult, ExportSettings } from './types.ts'
 
-export type ExportProject = Pick<ProjectState, 'clips' | 'texts' | 'sources'>
-
-const AUDIO_RATE = 48000
-const AUDIO_CHANNELS = 2
-const MIN_FRAME = 1e-4
-const FALLBACK_FRAME = 1 / 30
-
-interface Tracks {
-  video: InputVideoTrack | null
-  audio: InputAudioTrack | null
-}
+export type { ExportProject } from './types.ts'
 
 type VideoItem = { kind: 'video'; time: number; sample: VideoSample; segment: Segment }
-type AudioItem = { kind: 'audio'; time: number; sample: AudioSample }
 type Item = VideoItem | AudioItem
 
-// Cuts an audio block to the clip and brings it to stereo at 48 kHz, so every
-// block fed to the encoder has the same format whatever file it came from.
-function fitAudio(sample: AudioSample, window: TrimWindow): AudioSample {
-  const whole =
-    window.frameOffset === 0 && window.frameCount === sample.numberOfFrames
-  if (whole && sample.numberOfChannels === AUDIO_CHANNELS && sample.sampleRate === AUDIO_RATE) {
-    sample.setTimestamp(window.timestamp)
-    return sample
-  }
-  const planes: Float32Array[] = []
-  for (let plane = 0; plane < sample.numberOfChannels; plane++) {
-    const data = new Float32Array(window.frameCount)
-    sample.copyTo(data, {
-      planeIndex: plane,
-      format: 'f32-planar',
-      frameOffset: window.frameOffset,
-      frameCount: window.frameCount,
-    })
-    planes.push(data)
-  }
-  const [left, right] = remixToStereo(planes).map((channel) =>
-    resampleLinear(channel, sample.sampleRate, AUDIO_RATE),
-  )
-  const data = new Float32Array(left.length * AUDIO_CHANNELS)
-  data.set(left, 0)
-  data.set(right, left.length)
-  sample.close()
-  return new AudioSample({
-    data,
-    format: 'f32-planar',
-    numberOfChannels: AUDIO_CHANNELS,
-    sampleRate: AUDIO_RATE,
-    timestamp: window.timestamp,
-  })
-}
+const closeItem = (item: { sample: VideoSample | AudioSample }) => item.sample.close()
 
 // The plain full re-encode: every frame of every clip is decoded, painted onto
 // a canvas (effect, captions) and encoded again, one frame at a time. Audio is
@@ -96,30 +45,14 @@ export async function exportProject(
   const size = outputSize(frameSize(clips, sources), settings.height)
   const segments = buildSegments(clips)
   const startedAt = performance.now()
-
-  const inputs = new Map<string, Input>()
-  const tracks = new Map<string, Tracks>()
   let output: Output | null = null
+  let sink: ResultSink | null = null
+  const opened = await openProject(project, segments)
 
   try {
-    async function open(source: Source): Promise<void> {
-      const input = new Input({ formats: ALL_FORMATS, source: new BlobSource(source.file) })
-      inputs.set(source.id, input)
-      tracks.set(source.id, {
-        video: await input.getPrimaryVideoTrack(),
-        audio: await input.getPrimaryAudioTrack(),
-      })
-    }
-    for (const segment of segments) {
-      const source = sources.find((s) => s.id === segment.clip.sourceId)
-      if (!source) throw new Error('Кліп посилається на файл, якого немає в проєкті.')
-      if (!inputs.has(source.id)) await open(source)
-    }
-    const tracksOf = (segment: Segment) => tracks.get(segment.clip.sourceId) as Tracks
-    const hasAudio = segments.some((segment) => tracksOf(segment).audio)
-
-    const target = new BufferTarget()
-    output = new Output({ format: createFormat(settings.container), target })
+    const { hasAudio } = opened
+    sink = await createSink(settings.container)
+    output = new Output({ format: createFormat(settings.container, !sink.onDisk), target: sink.target })
 
     const canvas = new OffscreenCanvas(size.width, size.height)
     const ctx = canvas.getContext('2d')
@@ -136,7 +69,7 @@ export async function exportProject(
 
     async function* videoItems(): AsyncGenerator<Item> {
       for (const segment of segments) {
-        const track = tracksOf(segment).video
+        const track = opened.tracksOf(segment).video
         if (!track) continue
         const sink = new VideoSampleSink(track)
         for await (const sample of sink.samples(segment.start, segment.end)) {
@@ -146,46 +79,9 @@ export async function exportProject(
       }
     }
 
-    async function* audioItems(): AsyncGenerator<Item> {
-      if (!hasAudio) return
-      for (const segment of segments) {
-        const track = tracksOf(segment).audio
-        if (!track) {
-          const end = segment.offset + segment.length
-          for (const chunk of silenceChunks(segment.offset, end, AUDIO_RATE)) {
-            const sample = new AudioSample({
-              data: new Float32Array(chunk.frames * AUDIO_CHANNELS),
-              format: 'f32-planar',
-              numberOfChannels: AUDIO_CHANNELS,
-              sampleRate: AUDIO_RATE,
-              timestamp: chunk.timestamp,
-            })
-            yield { kind: 'audio', time: chunk.timestamp, sample }
-          }
-          continue
-        }
-        const sink = new AudioSampleSink(track)
-        for await (const sample of sink.samples(segment.start, segment.end)) {
-          const window = trimWindow(
-            sample.timestamp,
-            sample.numberOfFrames,
-            sample.sampleRate,
-            segment.start,
-            segment.end,
-            segment.offset,
-          )
-          if (!window) {
-            sample.close()
-            continue
-          }
-          const fitted = fitAudio(sample, window)
-          yield { kind: 'audio', time: fitted.timestamp, sample: fitted }
-        }
-      }
-    }
-
     let frames = 0
-    const merged = mergeByTime<Item>([videoItems(), audioItems()], (item) => item.sample.close())
+    let encodedSeconds = 0
+    const merged = mergeByTime<Item>([videoItems(), audioItems(segments, opened)], closeItem)
     for await (const item of merged) {
       if (signal?.aborted) {
         item.sample.close()
@@ -200,6 +96,7 @@ export async function exportProject(
           composeFrame(ctx, size.width, size.height, sample, segment.clip.effect, texts, time)
           await videoSource.add(time, duration)
           frames++
+          encodedSeconds += duration
           onProgress?.({ time: time + duration, total, frames })
         } else if (audioSource) {
           await audioSource.add(item.sample)
@@ -213,13 +110,13 @@ export async function exportProject(
     audioSource?.close()
     await output.finalize()
 
-    const buffer = target.buffer
-    if (!buffer) throw new Error('Експорт не створив файл.')
     const mimeType = await output.getMimeType()
+    const blob = await sink.finish(mimeType)
+    const finished = sink
     return {
-      blob: new Blob([buffer], { type: mimeType }),
+      blob,
       mimeType,
-      bytes: buffer.byteLength,
+      bytes: blob.size,
       elapsedMs: performance.now() - startedAt,
       frames,
       width: size.width,
@@ -227,13 +124,25 @@ export async function exportProject(
       duration: total,
       hasAudio,
       settings,
+      stats: {
+        mode: 'full',
+        framesCopied: 0,
+        framesRecoded: frames,
+        copiedSeconds: 0,
+        recodedSeconds: encodedSeconds,
+        runs: 1,
+        fallbackGops: 0,
+        rewrittenPackets: 0,
+      },
+      release: () => finished.discard(),
     }
   } catch (error) {
     if (output && output.state !== 'finalized' && output.state !== 'canceled') {
       await output.cancel().catch(() => {})
     }
+    await sink?.discard()
     throw error
   } finally {
-    for (const input of inputs.values()) input.dispose()
+    opened.dispose()
   }
 }

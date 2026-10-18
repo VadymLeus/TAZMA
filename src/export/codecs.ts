@@ -28,10 +28,11 @@ export const CONTAINER_LABELS: Record<Container, string> = {
   webm: 'WebM',
 }
 
-export function createFormat(container: Container): OutputFormat {
-  return container === 'mp4'
-    ? new Mp4OutputFormat({ fastStart: 'in-memory' })
-    : new WebMOutputFormat()
+// indexFirst keeps an MP4 in memory until the end so its index goes first;
+// files written to disk and throwaway outputs leave the index at the end.
+export function createFormat(container: Container, indexFirst = true): OutputFormat {
+  if (container === 'webm') return new WebMOutputFormat()
+  return indexFirst ? new Mp4OutputFormat({ fastStart: 'in-memory' }) : new Mp4OutputFormat()
 }
 
 export interface CodecChoices {
