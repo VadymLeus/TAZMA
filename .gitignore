@@ -52,3 +52,6 @@ Desktop.ini
 /test-media/
 /exports/
 /results/raw/
+
+# Personal project notes and documents, not part of the repository
+/pd/
