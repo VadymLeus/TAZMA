@@ -1,0 +1,19 @@
+# Normalize line endings: LF in the repository and in the working tree
+* text=auto eol=lf
+
+# Binary files: never convert or diff as text
+*.mp4 binary
+*.webm binary
+*.mkv binary
+*.mov binary
+*.m4a binary
+*.mp3 binary
+*.wav binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.woff binary
+*.woff2 binary
