@@ -1,6 +1,7 @@
 // src/App.tsx
 import { useEffect, useReducer, useRef, useState } from 'react'
 import DropZone from './components/DropZone.tsx'
+import ExportDialog from './components/ExportDialog.tsx'
 import FileList, { ImportNotes } from './components/FileList.tsx'
 import InfoPanel from './components/InfoPanel.tsx'
 import Inspector from './components/Inspector.tsx'
@@ -28,6 +29,7 @@ export default function App() {
   const { importFiles, pending, errors } = useImport(dispatch)
   const player = usePlayback(clips, sources)
   const [zoom, setZoom] = useState(1)
+  const [exportOpen, setExportOpen] = useState(false)
 
   const total = timelineDuration(clips)
   const activeSource = sources.find((s) => s.id === activeSourceId) ?? null
@@ -56,7 +58,9 @@ export default function App() {
   useEffect(() => {
     function handleKey(event: KeyboardEvent) {
       if (event.ctrlKey || event.metaKey || event.altKey) return
-      const tag = (event.target as HTMLElement).tagName
+      const target = event.target as HTMLElement
+      if (target.closest('dialog')) return
+      const tag = target.tagName
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
       if (event.key === ' ' && tag !== 'BUTTON') {
         event.preventDefault()
@@ -73,6 +77,11 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleKey)
   }, [])
 
+  function openExport() {
+    if (player.playing) player.toggle()
+    setExportOpen(true)
+  }
+
   function removeSource(sourceId: string) {
     const source = sources.find((s) => s.id === sourceId)
     if (source) URL.revokeObjectURL(source.url)
@@ -83,7 +92,18 @@ export default function App() {
     <div className="app">
       <header className="app-header">
         <span className="brand">TAZMA</span>
-        <span className="stage">Етап 3 · ефекти</span>
+        <span className="stage">Етап 4 · експорт</span>
+        {sources.length > 0 && (
+          <button
+            type="button"
+            className="btn btn-primary header-action"
+            disabled={total <= 0}
+            onClick={openExport}
+            title="Зберегти проєкт у файл"
+          >
+            Експорт
+          </button>
+        )}
       </header>
 
       {sources.length === 0 ? (
@@ -189,6 +209,14 @@ export default function App() {
           </section>
         </div>
       )}
+
+      <ExportDialog
+        open={exportOpen}
+        project={{ clips, texts, sources }}
+        frame={frame}
+        total={total}
+        onClose={() => setExportOpen(false)}
+      />
     </div>
   )
 }
