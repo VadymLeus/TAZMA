@@ -1,9 +1,15 @@
 // src/export/useExportJob.ts
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { exportProject } from './exportProject.ts'
-import type { ExportProject } from './exportProject.ts'
+import { describeError } from './errors.ts'
+import { runExport } from './runExport.ts'
+import { clearExportFiles } from './sink.ts'
 import { ExportAborted } from './types.ts'
-import type { ExportProgress, ExportResult, ExportSettings } from './types.ts'
+import type {
+  ExportProgress,
+  ExportProject,
+  ExportResult,
+  ExportSettings,
+} from './types.ts'
 
 export type JobState =
   | { phase: 'idle' }
@@ -18,10 +24,15 @@ export function useExportJob() {
   const [state, setState] = useState<JobState>({ phase: 'idle' })
   const controllerRef = useRef<AbortController | null>(null)
   const urlRef = useRef<string | null>(null)
+  const resultRef = useRef<ExportResult | null>(null)
 
+  // The link and the file behind the last result.
   const releaseUrl = useCallback(() => {
     if (urlRef.current) URL.revokeObjectURL(urlRef.current)
     urlRef.current = null
+    const previous = resultRef.current
+    resultRef.current = null
+    if (previous) void previous.release()
   }, [])
 
   const start = useCallback(
@@ -34,7 +45,7 @@ export function useExportJob() {
       let lastReport = 0
       setState({ phase: 'running', progress: null, startedAt })
       try {
-        const result = await exportProject(project, settings, {
+        const result = await runExport(project, settings, {
           signal: controller.signal,
           onProgress: (progress) => {
             const now = performance.now()
@@ -45,17 +56,20 @@ export function useExportJob() {
             setState({ phase: 'running', progress, startedAt })
           },
         })
-        if (controllerRef.current !== controller) return
+        if (controllerRef.current !== controller) {
+          void result.release()
+          return
+        }
         const url = URL.createObjectURL(result.blob)
         urlRef.current = url
+        resultRef.current = result
         setState({ phase: 'done', result, url })
       } catch (error) {
         if (controllerRef.current !== controller) return
         if (error instanceof ExportAborted) {
           setState({ phase: 'idle' })
         } else {
-          const message = error instanceof Error ? error.message : String(error)
-          setState({ phase: 'error', message })
+          setState({ phase: 'error', message: describeError(error) })
         }
       } finally {
         if (controllerRef.current === controller) controllerRef.current = null
@@ -71,13 +85,13 @@ export function useExportJob() {
     setState({ phase: 'idle' })
   }, [releaseUrl])
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    void clearExportFiles()
+    return () => {
       controllerRef.current?.abort()
       releaseUrl()
-    },
-    [releaseUrl],
-  )
+    }
+  }, [releaseUrl])
 
   return { state, start, cancel, reset }
 }

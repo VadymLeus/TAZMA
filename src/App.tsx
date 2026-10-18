@@ -92,7 +92,7 @@ export default function App() {
     <div className="app">
       <header className="app-header">
         <span className="brand">TAZMA</span>
-        <span className="stage">Етап 4 · експорт</span>
+        <span className="stage">Етап 5 · вибірковий експорт</span>
         {sources.length > 0 && (
           <button
             type="button"

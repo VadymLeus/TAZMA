@@ -4,12 +4,16 @@ import type { ChangeEvent } from 'react'
 import { AUDIO_LABELS, CONTAINER_LABELS, VIDEO_LABELS, availableCodecs } from '../export/codecs.ts'
 import type {
   Container,
+  ExportMode,
+  ExportProject,
   ExportResult,
   ExportSettings,
   QualityLevel,
 } from '../export/types.ts'
-import type { ExportProject } from '../export/exportProject.ts'
 import { heightChoices, outputSize } from '../export/geometry.ts'
+import { blockerLines, planSentence, statsSentence } from '../export/planText.ts'
+import { planProject } from '../export/selectiveAnalysis.ts'
+import type { ProjectPlan } from '../export/selectiveAnalysis.ts'
 import {
   availableContainers,
   defaultSettings,
@@ -37,6 +41,17 @@ const QUALITY_LABELS: Record<QualityLevel, string> = {
   high: 'Висока (більший файл)',
 }
 
+const MODE_LABELS: Record<ExportMode, string> = {
+  selective: 'Вибірковий: копіювати незмінене',
+  full: 'Повне перекодування',
+}
+
+type PlanState =
+  | { phase: 'idle' }
+  | { phase: 'loading' }
+  | { phase: 'ready'; plan: ProjectPlan }
+  | { phase: 'error'; message: string }
+
 const sizeLabel = (size: FrameSize) => `${size.width}×${size.height}`
 
 export default function ExportDialog({
@@ -49,6 +64,7 @@ export default function ExportDialog({
   const dialogRef = useRef<HTMLDialogElement>(null)
   const [settings, setSettings] = useState<ExportSettings>(defaultSettings)
   const [choices, setChoices] = useState<ContainerChoices | null>(null)
+  const [planState, setPlanState] = useState<PlanState>({ phase: 'idle' })
   const job = useExportJob()
   const { state } = job
   const running = state.phase === 'running'
@@ -85,6 +101,33 @@ export default function ExportDialog({
   )
   const audioMissing = hasAudio && codecs !== undefined && codecs.audio.length === 0
   const ready = choices !== null && containers.length > 0 && !audioMissing
+
+  const { mode, container, videoCodec, quality, height, ignoreColor } = effective
+  const { clips, texts, sources } = project
+  useEffect(() => {
+    if (!open || !ready || mode !== 'selective') {
+      setPlanState({ phase: 'idle' })
+      return
+    }
+    const controller = new AbortController()
+    setPlanState({ phase: 'loading' })
+    const timer = setTimeout(() => {
+      planProject({ clips, texts, sources }, { ...effective, mode, container, videoCodec, quality, height, ignoreColor }, controller.signal).then(
+        (plan) => setPlanState({ phase: 'ready', plan }),
+        (error: unknown) => {
+          if (controller.signal.aborted) return
+          setPlanState({
+            phase: 'error',
+            message: error instanceof Error ? error.message : String(error),
+          })
+        },
+      )
+    }, 150)
+    return () => {
+      clearTimeout(timer)
+      controller.abort()
+    }
+  }, [open, ready, mode, container, videoCodec, quality, height, ignoreColor, clips, texts, sources])
 
   function change(patch: Partial<ExportSettings>) {
     setSettings({ ...effective, ...patch })
@@ -126,6 +169,21 @@ export default function ExportDialog({
             <p className="error">Браузер не вміє кодувати відео у доступні формати.</p>
           ) : (
             <>
+              <label className="field">
+                <span>Режим</span>
+                <select
+                  value={effective.mode}
+                  onChange={(event: ChangeEvent<HTMLSelectElement>) =>
+                    change({ mode: event.target.value as ExportMode })
+                  }
+                >
+                  {(Object.keys(MODE_LABELS) as ExportMode[]).map((value) => (
+                    <option key={value} value={value}>
+                      {MODE_LABELS[value]}
+                    </option>
+                  ))}
+                </select>
+              </label>
               <label className="field">
                 <span>Контейнер</span>
                 <select
@@ -216,10 +274,28 @@ export default function ExportDialog({
                   Браузер не вміє кодувати звук у цьому контейнері, а в проєкті він є.
                 </p>
               )}
+              {effective.mode === 'selective' && (
+                <>
+                  <PlanNote state={planState} project={project} />
+                  <label className="check">
+                    <input
+                      type="checkbox"
+                      checked={effective.ignoreColor}
+                      onChange={(event: ChangeEvent<HTMLInputElement>) =>
+                        change({ ignoreColor: event.target.checked })
+                      }
+                    />
+                    <span>Не звіряти колірний простір</span>
+                  </label>
+                  <p className="muted export-note">
+                    Якщо файл і кодувальник заявляють різні колірні простори, на стиках
+                    скопійованих і перерахованих ділянок можливий зсув відтінків.
+                  </p>
+                </>
+              )}
               <p className="muted export-note">
-                У списках лише те, що цей браузер уміє кодувати. Зараз кожен кадр
-                проєкту декодується й кодується заново; вибіркове копіювання
-                з’явиться на наступному етапі.
+                У списках лише те, що цей браузер уміє кодувати. Звук завжди
+                кодується заново.
               </p>
             </>
           )}
@@ -317,6 +393,7 @@ function ResultInfo({ result }: { result: ExportResult }) {
       }`,
     ],
     ['Кадр', `${result.width}×${result.height}, ${result.frames} кадрів`],
+    ['Режим', statsSentence(result.stats)],
     ['Тривалість', formatSpan(result.duration)],
     ['Час кодування', formatSpan(result.elapsedMs / 1000)],
     [
@@ -333,5 +410,44 @@ function ResultInfo({ result }: { result: ExportResult }) {
         </Fragment>
       ))}
     </dl>
+  )
+}
+
+function PlanNote({ state, project }: { state: PlanState; project: ExportProject }) {
+  if (state.phase === 'idle') return null
+  if (state.phase === 'loading') {
+    return <p className="muted export-plan">Аналізую ключові кадри файлів…</p>
+  }
+  if (state.phase === 'error') {
+    return <p className="error export-plan">Не вдалося скласти план: {state.message}</p>
+  }
+  const nameOf = (sourceId: string) =>
+    project.sources.find((source) => source.id === sourceId)?.info.fileName ?? sourceId
+  const lines = blockerLines(
+    state.plan.blockers,
+    nameOf,
+    (sourceId) => state.plan.streams.get(sourceId) ?? null,
+    state.plan.target,
+  )
+  return (
+    <div className="export-plan" role="status">
+      <p>{planSentence(state.plan.summary)}</p>
+      {lines.length > 0 && (
+        <ul className="export-blockers">
+          {lines.map((line) => (
+            <li key={line.headline}>
+              {line.headline}
+              {line.details.length > 0 && (
+                <ul className="export-details">
+                  {line.details.map((detail) => (
+                    <li key={detail}>{detail}</li>
+                  ))}
+                </ul>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   )
 }

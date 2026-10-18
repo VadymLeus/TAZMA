@@ -377,6 +377,7 @@ body {
 
 .info dd {
   margin: 0;
+  overflow-wrap: anywhere;
 }
 
 .break {
@@ -690,6 +691,40 @@ textarea:focus-visible {
 .export-note {
   margin: 4px 0 0;
   font-size: 13px;
+}
+
+.export-plan {
+  margin: 4px 0 0;
+  padding: 10px 12px;
+  font-size: 14px;
+  background: var(--accent-soft);
+  border-radius: 8px;
+}
+
+.export-plan p {
+  margin: 0;
+}
+
+.export-blockers {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.check {
+  margin-top: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+}
+
+.export-details {
+  margin: 4px 0 0;
+  padding-left: 16px;
+  font-size: 12px;
+  overflow-wrap: anywhere;
 }
 
 .export-progress {
