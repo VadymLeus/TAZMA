@@ -1,6 +1,9 @@
 // src/components/VideoPreview.tsx
-import type { RefObject } from 'react'
+import type { CSSProperties, RefObject } from 'react'
 import { formatDuration } from '../media/format.ts'
+import type { FrameSize } from '../project/frame.ts'
+import type { TextItem } from '../project/types.ts'
+import TextOverlay from './TextOverlay.tsx'
 
 interface VideoPreviewProps {
   videoRef: RefObject<HTMLVideoElement | null>
@@ -9,6 +12,9 @@ interface VideoPreviewProps {
   playhead: number
   total: number
   error: string | null
+  frame: FrameSize
+  filter: string
+  texts: TextItem[]
   onToggle: () => void
 }
 
@@ -19,12 +25,19 @@ export default function VideoPreview({
   playhead,
   total,
   error,
+  frame,
+  filter,
+  texts,
   onToggle,
 }: VideoPreviewProps) {
   return (
     <section className="card">
-      <div className="screen">
-        <video ref={videoRef} playsInline preload="auto" />
+      <div
+        className="screen"
+        style={{ '--ratio': frame.width / frame.height } as CSSProperties}
+      >
+        <video ref={videoRef} playsInline preload="auto" style={{ filter }} />
+        <TextOverlay texts={texts} />
         {!hasClips && <div className="screen-empty">Таймлайн порожній</div>}
       </div>
       {error && <p className="notice">{error}</p>}

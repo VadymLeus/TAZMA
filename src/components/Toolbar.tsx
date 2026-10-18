@@ -1,11 +1,13 @@
 // src/components/Toolbar.tsx
 interface ToolbarProps {
   canSplit: boolean
+  canAddText: boolean
   canDelete: boolean
   canMoveLeft: boolean
   canMoveRight: boolean
   canZoomOut: boolean
   onSplit: () => void
+  onAddText: () => void
   onDelete: () => void
   onMove: (delta: -1 | 1) => void
   onZoomIn: () => void
@@ -15,11 +17,13 @@ interface ToolbarProps {
 
 export default function Toolbar({
   canSplit,
+  canAddText,
   canDelete,
   canMoveLeft,
   canMoveRight,
   canZoomOut,
   onSplit,
+  onAddText,
   onDelete,
   onMove,
   onZoomIn,
@@ -40,9 +44,18 @@ export default function Toolbar({
       <button
         type="button"
         className="btn"
+        disabled={!canAddText}
+        onClick={onAddText}
+        title="Додати текст у місці курсора (T)"
+      >
+        Текст
+      </button>
+      <button
+        type="button"
+        className="btn"
         disabled={!canDelete}
         onClick={onDelete}
-        title="Видалити виділений кліп (Delete)"
+        title="Видалити виділене (Delete)"
       >
         Видалити
       </button>

@@ -2,12 +2,15 @@
 import { useEffect, useRef, useState } from 'react'
 import type { CSSProperties, PointerEvent } from 'react'
 import { formatDuration } from '../media/format.ts'
+import type { Range } from '../project/recompute.ts'
+import { assignLanes } from '../project/texts.ts'
 import { clipLength } from '../project/timeline.ts'
-import type { Clip, Source } from '../project/types.ts'
+import type { Clip, Source, TextItem } from '../project/types.ts'
 
 const TICK_STEPS = [0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200]
 const MIN_TICK_GAP = 80
 const MAX_TICKS = 600
+const LANE = 26
 
 function tickLabel(seconds: number, step: number): string {
   const tenthsTotal = Math.round(seconds * 10)
@@ -24,23 +27,31 @@ function tickLabel(seconds: number, step: number): string {
 interface TimelineProps {
   clips: Clip[]
   sources: Source[]
+  texts: TextItem[]
+  recompute: Range[]
   playhead: number
   total: number
   zoom: number
   selectedClipId: string | null
+  selectedTextId: string | null
   onSeek: (time: number) => void
   onSelect: (clipId: string | null) => void
+  onSelectText: (textId: string) => void
 }
 
 export default function Timeline({
   clips,
   sources,
+  texts,
+  recompute,
   playhead,
   total,
   zoom,
   selectedClipId,
+  selectedTextId,
   onSeek,
   onSelect,
+  onSelectText,
 }: TimelineProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const dragging = useRef(false)
@@ -75,6 +86,7 @@ export default function Timeline({
     for (let t = 0; t < total; t += step) ticks.push(t)
   }
 
+  const { lane, count: laneCount } = assignLanes(texts)
   const hueOf = new Map(sources.map((s, i) => [s.id, (i * 67) % 360]))
   const nameOf = new Map(sources.map((s) => [s.id, s.info.fileName]))
 
@@ -87,10 +99,11 @@ export default function Timeline({
     if (event.button !== 0 || pps === 0) return
     event.currentTarget.setPointerCapture(event.pointerId)
     dragging.current = true
-    const clipElement = (event.target as HTMLElement).closest<HTMLElement>(
-      '[data-clip-id]',
-    )
+    const target = event.target as HTMLElement
+    const clipElement = target.closest<HTMLElement>('[data-clip-id]')
+    const textElement = target.closest<HTMLElement>('[data-text-id]')
     if (clipElement) onSelect(clipElement.dataset.clipId ?? null)
+    else if (textElement?.dataset.textId) onSelectText(textElement.dataset.textId)
     onSeek(timeAt(event))
   }
 
@@ -146,6 +159,40 @@ export default function Timeline({
               <span className="clip-name">{nameOf.get(clip.sourceId)}</span>
               <span className="clip-length">{formatDuration(clipLength(clip))}</span>
             </div>
+          ))}
+        </div>
+        <div className="track-text" style={{ height: laneCount * LANE + 8 }}>
+          {texts.length === 0 && (
+            <span className="track-hint">Тут з'являться написи</span>
+          )}
+          {texts.map((text) => (
+            <div
+              key={text.id}
+              data-text-id={text.id}
+              className={
+                text.id === selectedTextId ? 'text-block text-selected' : 'text-block'
+              }
+              style={{
+                left: text.start * pps,
+                width: (text.end - text.start) * pps,
+                top: 4 + (lane.get(text.id) ?? 0) * LANE,
+              }}
+              title={text.text}
+            >
+              {text.text}
+            </div>
+          ))}
+        </div>
+        <div className="track-recompute">
+          {recompute.map((range) => (
+            <div
+              key={range.start}
+              className="recompute-range"
+              style={{
+                left: range.start * pps,
+                width: (range.end - range.start) * pps,
+              }}
+            />
           ))}
         </div>
         <div className="playhead" style={{ left: playhead * pps }} />

@@ -3,12 +3,18 @@ import { useEffect, useReducer, useRef, useState } from 'react'
 import DropZone from './components/DropZone.tsx'
 import FileList, { ImportNotes } from './components/FileList.tsx'
 import InfoPanel from './components/InfoPanel.tsx'
+import Inspector from './components/Inspector.tsx'
 import KeyframesCard from './components/KeyframesCard.tsx'
 import Timeline from './components/Timeline.tsx'
 import Toolbar from './components/Toolbar.tsx'
 import VideoPreview from './components/VideoPreview.tsx'
+import { formatSpan } from './media/format.ts'
+import { effectFilter } from './project/effects.ts'
+import { frameSize } from './project/frame.ts'
 import { initialProject, projectReducer } from './project/projectReducer.ts'
-import { canSplit, timelineDuration } from './project/timeline.ts'
+import { rangesLength, recomputeRanges } from './project/recompute.ts'
+import { MIN_TEXT, textsAt } from './project/texts.ts'
+import { canSplit, locate, timelineDuration } from './project/timeline.ts'
 import { useImport } from './project/useImport.ts'
 import { usePlayback } from './project/usePlayback.ts'
 
@@ -17,7 +23,8 @@ const MAX_ZOOM = 100
 
 export default function App() {
   const [project, dispatch] = useReducer(projectReducer, initialProject)
-  const { sources, clips, selectedClipId, activeSourceId } = project
+  const { sources, clips, texts, selectedClipId, selectedTextId, activeSourceId } =
+    project
   const { importFiles, pending, errors } = useImport(dispatch)
   const player = usePlayback(clips, sources)
   const [zoom, setZoom] = useState(1)
@@ -25,14 +32,25 @@ export default function App() {
   const total = timelineDuration(clips)
   const activeSource = sources.find((s) => s.id === activeSourceId) ?? null
   const selectedIndex = clips.findIndex((c) => c.id === selectedClipId)
+  const selectedClip = clips[selectedIndex] ?? null
+  const selectedText = texts.find((t) => t.id === selectedTextId) ?? null
+
+  const frame = frameSize(clips, sources)
+  const location = locate(clips, player.playhead)
+  const filter = effectFilter(location ? clips[location.index].effect : undefined)
+  const activeTexts = textsAt(texts, player.playhead)
+  const recompute = recomputeRanges(clips, texts)
+  const recomputeTotal = rangesLength(recompute)
 
   const split = () =>
     dispatch({ type: 'split', time: player.playhead, newId: crypto.randomUUID() })
+  const addText = () =>
+    dispatch({ type: 'addText', textId: crypto.randomUUID(), time: player.playhead })
   const remove = () => dispatch({ type: 'deleteSelected' })
 
-  const actions = useRef({ split, remove, toggle: player.toggle })
+  const actions = useRef({ split, addText, remove, toggle: player.toggle })
   useEffect(() => {
-    actions.current = { split, remove, toggle: player.toggle }
+    actions.current = { split, addText, remove, toggle: player.toggle }
   })
 
   useEffect(() => {
@@ -45,6 +63,8 @@ export default function App() {
         actions.current.toggle()
       } else if (event.key === 's' || event.key === 'S') {
         actions.current.split()
+      } else if (event.key === 't' || event.key === 'T') {
+        actions.current.addText()
       } else if (event.key === 'Delete' || event.key === 'Backspace') {
         actions.current.remove()
       }
@@ -63,7 +83,7 @@ export default function App() {
     <div className="app">
       <header className="app-header">
         <span className="brand">TAZMA</span>
-        <span className="stage">Етап 2 · таймлайн</span>
+        <span className="stage">Етап 3 · ефекти</span>
       </header>
 
       {sources.length === 0 ? (
@@ -96,11 +116,30 @@ export default function App() {
               playhead={player.playhead}
               total={total}
               error={player.error}
+              frame={frame}
+              filter={filter}
+              texts={activeTexts}
               onToggle={player.toggle}
             />
           </div>
 
           <div className="editor-info">
+            <Inspector
+              clip={selectedClip}
+              clipName={
+                sources.find((s) => s.id === selectedClip?.sourceId)?.info.fileName ?? ''
+              }
+              text={selectedText}
+              playhead={player.playhead}
+              onEffect={(effect) =>
+                selectedClip &&
+                dispatch({ type: 'setEffect', clipId: selectedClip.id, effect })
+              }
+              onText={(patch) =>
+                selectedText &&
+                dispatch({ type: 'updateText', textId: selectedText.id, patch })
+              }
+            />
             {activeSource && (
               <>
                 <InfoPanel info={activeSource.info} />
@@ -112,11 +151,13 @@ export default function App() {
           <section className="card editor-timeline">
             <Toolbar
               canSplit={canSplit(clips, player.playhead)}
-              canDelete={selectedIndex >= 0}
+              canAddText={total >= MIN_TEXT}
+              canDelete={selectedIndex >= 0 || selectedText !== null}
               canMoveLeft={selectedIndex > 0}
               canMoveRight={selectedIndex >= 0 && selectedIndex < clips.length - 1}
               canZoomOut={zoom > 1}
               onSplit={split}
+              onAddText={addText}
               onDelete={remove}
               onMove={(delta) => dispatch({ type: 'moveSelected', delta })}
               onZoomIn={() => setZoom((z) => Math.min(z * ZOOM_STEP, MAX_ZOOM))}
@@ -126,13 +167,25 @@ export default function App() {
             <Timeline
               clips={clips}
               sources={sources}
+              texts={texts}
+              recompute={recompute}
               playhead={player.playhead}
               total={total}
               zoom={zoom}
               selectedClipId={selectedClipId}
+              selectedTextId={selectedTextId}
               onSeek={player.seek}
               onSelect={(clipId) => dispatch({ type: 'selectClip', clipId })}
+              onSelectText={(textId) => dispatch({ type: 'selectText', textId })}
             />
+            {total > 0 && (
+              <p className="recompute-note">
+                <span className="swatch" aria-hidden="true" />
+                {recomputeTotal > 0
+                  ? `Потребує перерахунку при експорті: ${formatSpan(recomputeTotal)} з ${formatSpan(total)} (${Math.max(1, Math.round((recomputeTotal / total) * 100))} %). Решту можна копіювати.`
+                  : 'Ефектів і тексту немає: при експорті все можна копіювати без перерахунку.'}
+              </p>
+            )}
           </section>
         </div>
       )}
