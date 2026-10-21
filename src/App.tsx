@@ -6,6 +6,7 @@ import FileList, { ImportNotes } from './components/FileList.tsx'
 import InfoPanel from './components/InfoPanel.tsx'
 import Inspector from './components/Inspector.tsx'
 import KeyframesCard from './components/KeyframesCard.tsx'
+import ResumeDialog from './components/ResumeDialog.tsx'
 import Timeline from './components/Timeline.tsx'
 import Toolbar from './components/Toolbar.tsx'
 import VideoPreview from './components/VideoPreview.tsx'
@@ -18,6 +19,7 @@ import { MIN_TEXT, textsAt } from './project/texts.ts'
 import { canSplit, locate, timelineDuration } from './project/timeline.ts'
 import { useImport } from './project/useImport.ts'
 import { usePlayback } from './project/usePlayback.ts'
+import { useUnfinished } from './resume/useUnfinished.ts'
 
 const ZOOM_STEP = 1.5
 const MAX_ZOOM = 100
@@ -26,10 +28,13 @@ export default function App() {
   const [project, dispatch] = useReducer(projectReducer, initialProject)
   const { sources, clips, texts, selectedClipId, selectedTextId, activeSourceId } =
     project
-  const { importFiles, pending, errors } = useImport(dispatch)
+  const { importFiles, pending, errors, status } = useImport(dispatch)
   const player = usePlayback(clips, sources)
   const [zoom, setZoom] = useState(1)
   const [exportOpen, setExportOpen] = useState(false)
+  const [resumeOpen, setResumeOpen] = useState(false)
+  const unfinished = useUnfinished()
+  const waiting = unfinished.jobs.filter((item) => !item.active).length
 
   const total = timelineDuration(clips)
   const activeSource = sources.find((s) => s.id === activeSourceId) ?? null
@@ -82,6 +87,22 @@ export default function App() {
     setExportOpen(true)
   }
 
+  function openResume() {
+    if (player.playing) player.toggle()
+    void unfinished.refresh()
+    setResumeOpen(true)
+  }
+
+  function closeExport() {
+    setExportOpen(false)
+    void unfinished.refresh()
+  }
+
+  function closeResume() {
+    setResumeOpen(false)
+    void unfinished.refresh()
+  }
+
   function removeSource(sourceId: string) {
     const source = sources.find((s) => s.id === sourceId)
     if (source) URL.revokeObjectURL(source.url)
@@ -92,24 +113,36 @@ export default function App() {
     <div className="app">
       <header className="app-header">
         <span className="brand">TAZMA</span>
-        <span className="stage">Етап 5 · вибірковий експорт</span>
-        {sources.length > 0 && (
-          <button
-            type="button"
-            className="btn btn-primary header-action"
-            disabled={total <= 0}
-            onClick={openExport}
-            title="Зберегти проєкт у файл"
-          >
-            Експорт
-          </button>
-        )}
+        <span className="stage">Етап 7 · відновлення</span>
+        <div className="header-actions">
+          {waiting > 0 && (
+            <button
+              type="button"
+              className="btn header-action"
+              onClick={openResume}
+              title="Експорти, що не дійшли до кінця, лишили журнали в сховищі браузера"
+            >
+              Продовжити експорт ({waiting})
+            </button>
+          )}
+          {sources.length > 0 && (
+            <button
+              type="button"
+              className="btn btn-primary header-action"
+              disabled={total <= 0}
+              onClick={openExport}
+              title="Зберегти проєкт у файл"
+            >
+              Експорт
+            </button>
+          )}
+        </div>
       </header>
 
       {sources.length === 0 ? (
         <>
           <DropZone onFiles={importFiles} />
-          <ImportNotes pending={pending} errors={errors} />
+          <ImportNotes pending={pending} errors={errors} status={status} />
         </>
       ) : (
         <div className="editor">
@@ -119,6 +152,7 @@ export default function App() {
               activeSourceId={activeSourceId}
               pending={pending}
               errors={errors}
+              status={status}
               onFiles={importFiles}
               onActivate={(sourceId) => dispatch({ type: 'activateSource', sourceId })}
               onAppend={(sourceId) =>
@@ -215,7 +249,16 @@ export default function App() {
         project={{ clips, texts, sources }}
         frame={frame}
         total={total}
-        onClose={() => setExportOpen(false)}
+        onClose={closeExport}
+      />
+      <ResumeDialog
+        open={resumeOpen}
+        jobs={unfinished.jobs}
+        files={sources.map((source) => source.file)}
+        onClose={closeResume}
+        onRemove={unfinished.remove}
+        onRemoveAll={unfinished.removeAll}
+        onChanged={unfinished.refresh}
       />
     </div>
   )

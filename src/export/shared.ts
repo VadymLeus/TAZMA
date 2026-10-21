@@ -8,16 +8,16 @@ import {
 } from 'mediabunny'
 import type { InputAudioTrack, InputVideoTrack } from 'mediabunny'
 import type { Source } from '../project/types.ts'
-import { silenceChunks, trimWindow } from './audio.ts'
+import { failureAtTail, silenceChunks, trimWindow } from './audio.ts'
 import type { TrimWindow } from './audio.ts'
 import { remixToStereo, resampleLinear } from './audioFormat.ts'
+import { isDecoderError } from './errors.ts'
 import type { Segment } from './plan.ts'
 import type { ExportProject } from './types.ts'
 
 export const AUDIO_RATE = 48000
 export const AUDIO_CHANNELS = 2
-export const MIN_FRAME = 1e-4
-export const FALLBACK_FRAME = 1 / 30
+export { FALLBACK_FRAME, MIN_FRAME } from './frameTiming.ts'
 
 export interface Tracks {
   video: InputVideoTrack | null
@@ -26,7 +26,11 @@ export interface Tracks {
 
 export interface OpenedProject {
   tracksOf: (segment: Segment) => Tracks
+  // File name of the source of a segment.
+  nameOf: (segment: Segment) => string
   hasAudio: boolean
+  // What went wrong without stopping the export; goes into the result.
+  notes: string[]
   dispose: () => void
 }
 
@@ -37,6 +41,7 @@ export async function openProject(
 ): Promise<OpenedProject> {
   const inputs = new Map<string, Input>()
   const tracks = new Map<string, Tracks>()
+  const names = new Map<string, string>()
   const dispose = () => {
     for (const input of inputs.values()) input.dispose()
   }
@@ -44,6 +49,7 @@ export async function openProject(
     async function open(source: Source): Promise<void> {
       const input = new Input({ formats: ALL_FORMATS, source: new BlobSource(source.file) })
       inputs.set(source.id, input)
+      names.set(source.id, source.file.name)
       tracks.set(source.id, {
         video: await input.getPrimaryVideoTrack(),
         audio: await input.getPrimaryAudioTrack(),
@@ -61,7 +67,9 @@ export async function openProject(
   const tracksOf = (segment: Segment) => tracks.get(segment.clip.sourceId) as Tracks
   return {
     tracksOf,
+    nameOf: (segment) => names.get(segment.clip.sourceId) ?? '',
     hasAudio: segments.some((segment) => tracksOf(segment).audio),
+    notes: [],
     dispose,
   }
 }
@@ -128,21 +136,48 @@ export async function* audioItems(
       continue
     }
     const sink = new AudioSampleSink(track)
-    for await (const sample of sink.samples(segment.start, segment.end)) {
-      const window = trimWindow(
-        sample.timestamp,
-        sample.numberOfFrames,
-        sample.sampleRate,
-        segment.start,
-        segment.end,
-        segment.offset,
-      )
-      if (!window) {
-        sample.close()
-        continue
+    // The end of the sound decoded so far, in source seconds and on the
+    // timeline.
+    let decodedEnd: number | null = null
+    let covered = segment.offset
+    try {
+      for await (const sample of sink.samples(segment.start, segment.end)) {
+        const end = sample.timestamp + sample.numberOfFrames / sample.sampleRate
+        const window = trimWindow(
+          sample.timestamp,
+          sample.numberOfFrames,
+          sample.sampleRate,
+          segment.start,
+          segment.end,
+          segment.offset,
+        )
+        if (!window) {
+          sample.close()
+          decodedEnd = end
+          continue
+        }
+        const fitted = fitAudio(sample, window)
+        decodedEnd = end
+        covered = fitted.timestamp + fitted.numberOfFrames / AUDIO_RATE
+        yield { kind: 'audio', time: fitted.timestamp, sample: fitted }
       }
-      const fitted = fitAudio(sample, window)
-      yield { kind: 'audio', time: fitted.timestamp, sample: fitted }
+    } catch (error) {
+      if (!isDecoderError(error) || !failureAtTail(decodedEnd, segment.end)) throw error
+      const name = opened.nameOf(segment)
+      opened.notes.push(
+        `Звук файлу «${name}» зупинився на ${(decodedEnd as number).toFixed(1).replace('.', ',')} с: декодер видав помилку майже в кінці кліпа. Решту замінено тишею.`,
+      )
+      const until = segment.offset + segment.length
+      for (const chunk of silenceChunks(covered, until, AUDIO_RATE)) {
+        const silence = new AudioSample({
+          data: new Float32Array(chunk.frames * AUDIO_CHANNELS),
+          format: 'f32-planar',
+          numberOfChannels: AUDIO_CHANNELS,
+          sampleRate: AUDIO_RATE,
+          timestamp: chunk.timestamp,
+        })
+        yield { kind: 'audio', time: chunk.timestamp, sample: silence }
+      }
     }
   }
 }

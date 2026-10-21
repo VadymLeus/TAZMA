@@ -2,40 +2,29 @@
 import {
   AudioSampleSource,
   CanvasSource,
-  EncodedPacketSink,
   EncodedVideoPacketSource,
   NullTarget,
   Output,
   Quality,
-  VideoSampleSink,
 } from 'mediabunny'
-import type { AudioSample, EncodedPacket, InputVideoTrack, VideoSample } from 'mediabunny'
+import type { AudioSample, EncodedPacket, VideoSample } from 'mediabunny'
 import { frameSize } from '../project/frame.ts'
 import { timelineDuration } from '../project/timeline.ts'
-import { ParameterRegistry, startsWithIdr } from './avcSets.ts'
 import { createFormat } from './codecs.ts'
 import { createSink } from './sink.ts'
 import type { ResultSink } from './sink.ts'
 import { composeFrame } from './compose.ts'
-import { isClosedGop } from './gop.ts'
 import { outputSize } from './geometry.ts'
 import { mergeByTime } from './merge.ts'
 import { buildSegments } from './plan.ts'
-import type { Segment } from './plan.ts'
-import { analyzeProject, toBytes } from './selectiveAnalysis.ts'
-import { planSelective } from './selectivePlan.ts'
-import type { Piece } from './selectivePlan.ts'
+import { prepareSelective } from './selectiveSource.ts'
 import { FALLBACK_FRAME, MIN_FRAME, audioItems, openProject } from './shared.ts'
 import type { AudioItem } from './shared.ts'
 import { ExportAborted } from './types.ts'
-import type { ExportOptions, ExportProject, ExportResult, ExportSettings } from './types.ts'
+import type { ExportOptions, ExportProject, ExportResult, VideoSettings } from './types.ts'
+import type { VideoItem } from './videoItems.ts'
 
-const EPS = 1e-6
-const ENCODER = 'encoder'
-
-type FrameItem = { kind: 'frame'; time: number; sample: VideoSample; segment: Segment }
-type PacketItem = { kind: 'packet'; time: number; packet: EncodedPacket }
-type Item = FrameItem | PacketItem | AudioItem
+type Item = VideoItem | AudioItem
 
 interface Run {
   output: Output
@@ -49,11 +38,11 @@ interface Run {
 // Audio is always encoded again.
 export async function exportSelective(
   project: ExportProject,
-  settings: ExportSettings,
+  settings: VideoSettings,
   options: ExportOptions = {},
 ): Promise<ExportResult> {
   const { clips, texts, sources } = project
-  const { signal, onProgress } = options
+  const { signal, onProgress, flow } = options
   const total = timelineDuration(clips)
   if (clips.length === 0 || total <= 0) throw new Error('Таймлайн порожній.')
 
@@ -66,32 +55,9 @@ export async function exportSelective(
   const opened = await openProject(project, segments)
 
   try {
-    const analysis = await analyzeProject(segments, opened, settings, size, signal)
-    let pieces = planSelective(segments, texts, analysis.analyses)
+    const selective = await prepareSelective({ segments, texts, opened, settings, size, signal })
     const { hasAudio } = opened
-
-    // H.264 from several files shares one track: every set the output uses
-    // is written into its description under a number of its own.
-    let registry: ParameterRegistry | null = null
-    if (settings.videoCodec === 'avc') {
-      const encoderStream = { key: ENCODER, description: analysis.encoder.description }
-      const used = new Set<string>()
-      for (const piece of pieces) {
-        if (piece.kind === 'copy') used.add(segments[piece.segment].clip.sourceId)
-      }
-      registry = ParameterRegistry.create([
-        ...[...used].map((id) => ({ key: id, description: analysis.streams.get(id)?.description })),
-        encoderStream,
-      ])
-      if (!registry) {
-        for (const item of analysis.analyses) item.copyable = false
-        pieces = planSelective(segments, texts, analysis.analyses)
-        registry = ParameterRegistry.create([encoderStream])
-      }
-    }
-    const videoConfig: VideoDecoderConfig = registry
-      ? { ...analysis.encoder.config, codec: registry.codecString, description: registry.description }
-      : analysis.encoder.config
+    const videoConfig = selective.videoConfig
 
     sink = await createSink(settings.container)
     output = new Output({ format: createFormat(settings.container, !sink.onDisk), target: sink.target })
@@ -113,7 +79,6 @@ export async function exportSelective(
     // the track receives them in the order they were produced.
     let queue: Promise<void> = Promise.resolve()
     let described = false
-    let rewritten = 0
     // A problem met inside an encoder callback, raised by the main loop.
     let failure: unknown = null
     const check = () => {
@@ -124,15 +89,6 @@ export async function exportSelective(
       described = true
       queue = queue.then(() => videoSource.add(packet, meta))
       return queue
-    }
-
-    // Moves a packet of the stream called key onto the numbers of the
-    // output's parameter sets; null when that cannot be done.
-    const moveToOutput = (packet: EncodedPacket, key: string): EncodedPacket | null => {
-      if (!registry) return packet
-      const data = registry.rewrite(key, packet.data)
-      if (!data) return null
-      return data === packet.data ? packet : packet.clone({ data })
     }
 
     const stats = {
@@ -156,22 +112,15 @@ export async function exportSelective(
         codec: settings.videoCodec,
         quality,
         onEncodedPacket: (packet, meta) => {
-          // The output's description was fixed with the first packet, so a
-          // session that comes back with other parameter sets cannot be used.
-          const reported = toBytes(meta?.decoderConfig?.description)
-          if (first && registry && reported && !registry.matches(ENCODER, reported)) {
-            failure ??= new Error(
-              'Кодувальник повернув інші параметри H.264 у новому сеансі. Спробуйте повне перекодування.',
-            )
-          }
+          flow?.encoded(1)
+          if (first) failure ??= selective.sessionProblem(meta)
           first = false
           const own = packet.clone()
-          const moved = moveToOutput(own, ENCODER)
+          const moved = selective.fromEncoder(own)
           if (!moved) {
             failure ??= new Error('Не вдалося перенести пакет H.264 у спільний потік.')
             return
           }
-          if (moved !== own) rewritten++
           void sendPacket(moved)
         },
       })
@@ -188,110 +137,7 @@ export async function exportSelective(
       finished.source.close()
       await finished.output.finalize()
       await queue
-    }
-
-    async function* recodeFrames(
-      segment: Segment,
-      track: InputVideoTrack,
-      from: number,
-      to: number,
-      keepFirst: boolean,
-    ): AsyncGenerator<FrameItem> {
-      const sink = new VideoSampleSink(track)
-      for await (const sample of sink.samples(from, to)) {
-        if (!keepFirst && sample.timestamp < from - EPS) {
-          sample.close()
-          continue
-        }
-        const time = segment.offset + Math.max(0, sample.timestamp - segment.start)
-        yield { kind: 'frame', time, sample, segment }
-      }
-    }
-
-    // One GOP is read whole before anything is sent: a GOP whose frames reach
-    // outside its key frame window (open GOP) is decoded and encoded again.
-    async function* copyPackets(
-      segment: Segment,
-      track: InputVideoTrack,
-      piece: Extract<Piece, { kind: 'copy' }>,
-    ): AsyncGenerator<FrameItem | PacketItem> {
-      const sink = new EncodedPacketSink(track)
-      const start = await sink.getKeyPacket(piece.from + EPS)
-      const end = piece.toEnd ? null : await sink.getKeyPacket(piece.to + EPS)
-      const aligned =
-        start !== null &&
-        Math.abs(start.timestamp - piece.from) <= EPS &&
-        (piece.toEnd || (end !== null && Math.abs(end.timestamp - piece.to) <= EPS))
-      if (!aligned || !start) {
-        yield* recodeFrames(segment, track, piece.from, piece.to, false)
-        return
-      }
-
-      // A GOP that can be copied, with its packets moved onto the output's
-      // parameter sets; null when it has to be encoded again. An H.264 GOP
-      // has to start with an IDR picture, the only one that may switch the
-      // sequence parameter set.
-      const readyGop = (gop: EncodedPacket[], from: number, until: number): EncodedPacket[] | null => {
-        if (!isClosedGop(gop.map((packet) => packet.timestamp), from, until, EPS)) return null
-        if (!registry) return gop
-        const head = gop[0]
-        if (!head || !startsWithIdr(head.data, registry.lengthSize)) return null
-        const moved: EncodedPacket[] = []
-        let changed = 0
-        for (const packet of gop) {
-          const next = moveToOutput(packet, segment.clip.sourceId)
-          if (!next) return null
-          if (next !== packet) changed++
-          moved.push(next)
-        }
-        rewritten += changed
-        return moved
-      }
-
-      const sendGop = async function* (
-        gop: EncodedPacket[],
-        from: number,
-        until: number,
-      ): AsyncGenerator<FrameItem | PacketItem> {
-        const ready = readyGop(gop, from, until)
-        if (!ready) {
-          stats.fallbackGops++
-          yield* recodeFrames(segment, track, from, Math.min(until, piece.to), false)
-          return
-        }
-        for (const packet of ready) {
-          const time = Math.max(segment.offset, segment.offset + packet.timestamp - segment.start)
-          yield { kind: 'packet', time, packet: packet.clone({ timestamp: time }) }
-        }
-      }
-
-      let gop: EncodedPacket[] = []
-      let gopStart = start.timestamp
-      for await (const packet of sink.packets(start, end ?? undefined)) {
-        if (packet.type === 'key' && gop.length > 0) {
-          yield* sendGop(gop, gopStart, packet.timestamp)
-          gop = []
-          gopStart = packet.timestamp
-        }
-        gop.push(packet)
-      }
-      if (gop.length > 0) {
-        yield* sendGop(gop, gopStart, piece.toEnd ? Infinity : piece.to)
-      }
-    }
-
-    async function* videoItems(): AsyncGenerator<FrameItem | PacketItem> {
-      for (const piece of pieces) {
-        const segment = segments[piece.segment]
-        const track = opened.tracksOf(segment).video
-        if (!track) continue
-        if (piece.kind === 'copy') {
-          yield* copyPackets(segment, track, piece)
-        } else {
-          const first = piece.from <= segment.start + EPS
-          yield* recodeFrames(segment, track, piece.from, piece.to, first)
-        }
-      }
+      flow?.settle()
     }
 
     const dispose = (item: Item) => {
@@ -299,7 +145,7 @@ export async function exportSelective(
     }
 
     let frames = 0
-    const merged = mergeByTime<Item>([videoItems(), audioItems(segments, opened)], dispose)
+    const merged = mergeByTime<Item>([selective.items(), audioItems(segments, opened)], dispose)
     for await (const item of merged) {
       check()
       if (signal?.aborted) {
@@ -321,6 +167,7 @@ export async function exportSelective(
         stats.copiedSeconds += packet.duration
         onProgress?.({ time: time + packet.duration, total, frames })
       } else {
+        let handedOn = false
         try {
           const { segment, sample, time } = item
           const natural = sample.duration > 0 ? sample.duration : FALLBACK_FRAME
@@ -329,11 +176,13 @@ export async function exportSelective(
           run ??= await startRun()
           composeFrame(ctx, size.width, size.height, sample, segment.clip.effect, texts, time)
           await run.source.add(time, duration)
+          handedOn = true
           frames++
           stats.framesRecoded++
           stats.recodedSeconds += duration
           onProgress?.({ time: time + duration, total, frames })
         } finally {
+          if (handedOn) flow?.handOff()
           item.sample.close()
         }
       }
@@ -342,7 +191,8 @@ export async function exportSelective(
     await endRun()
     await queue
     check()
-    stats.rewrittenPackets = rewritten
+    stats.rewrittenPackets = selective.counts.rewritten
+    stats.fallbackGops = selective.counts.fallbackGops
     audioSource?.close()
     videoSource.close()
     await output.finalize()
@@ -360,6 +210,8 @@ export async function exportSelective(
       height: size.height,
       duration: total,
       hasAudio,
+      notes: opened.notes,
+      file: finished.name,
       settings,
       stats,
       release: () => finished.discard(),

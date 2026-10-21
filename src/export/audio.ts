@@ -48,3 +48,18 @@ export function silenceChunks(
   }
   return chunks
 }
+
+// How far from the end of a clip a decoder may fail and leave the rest of the
+// clip without sound, in seconds. A file that was cut off or not closed
+// properly often has one broken packet at the very end.
+export const AUDIO_TAIL_SLACK = 2
+
+// Whether a failure of the audio decoder is at the tail of the clip: the sound
+// decoded so far (source seconds, null if none) reaches almost to the end.
+export function failureAtTail(
+  decodedEnd: number | null,
+  clipEnd: number,
+  slack = AUDIO_TAIL_SLACK,
+): boolean {
+  return decodedEnd !== null && decodedEnd >= clipEnd - slack
+}

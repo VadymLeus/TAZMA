@@ -12,3 +12,10 @@ export function describeError(error: unknown): string {
   }
   return message
 }
+
+// A failure of the decoder itself, as opposed to a cancelled export, a full
+// disk or a broken project.
+export function isDecoderError(error: unknown): boolean {
+  if (!(error instanceof Error) || error.name === 'AbortError') return false
+  return error.name === 'EncodingError' || /decoding error/i.test(error.message)
+}

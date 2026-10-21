@@ -6,12 +6,14 @@ import DropZone from './DropZone.tsx'
 interface ImportNotesProps {
   pending: number
   errors: string[]
+  // What a long step (a GIF being unpacked) is doing right now.
+  status?: string | null
 }
 
-export function ImportNotes({ pending, errors }: ImportNotesProps) {
+export function ImportNotes({ pending, errors, status = null }: ImportNotesProps) {
   return (
     <>
-      {pending > 0 && <p className="muted">Читаю файли: {pending}…</p>}
+      {pending > 0 && <p className="muted">{status ?? `Читаю файли: ${pending}…`}</p>}
       {errors.map((message, index) => (
         <p key={index} className="error">
           {message}
@@ -35,6 +37,7 @@ export default function FileList({
   activeSourceId,
   pending,
   errors,
+  status,
   onFiles,
   onActivate,
   onAppend,
@@ -88,7 +91,7 @@ export default function FileList({
           )
         })}
       </ul>
-      <ImportNotes pending={pending} errors={errors} />
+      <ImportNotes pending={pending} errors={errors} status={status} />
       <DropZone onFiles={onFiles} compact />
     </section>
   )

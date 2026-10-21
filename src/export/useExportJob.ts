@@ -1,7 +1,8 @@
 // src/export/useExportJob.ts
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { measurementOf, saveMeasurement } from '../resume/measure.ts'
 import { describeError } from './errors.ts'
-import { runExport } from './runExport.ts'
+import { runExportJob } from './runJob.ts'
 import { clearExportFiles } from './sink.ts'
 import { ExportAborted } from './types.ts'
 import type {
@@ -18,6 +19,19 @@ export type JobState =
   | { phase: 'error'; message: string }
 
 const PROGRESS_INTERVAL = 100
+
+export interface StartExtra {
+  // Go on with the journal of this job instead of starting an export.
+  resumeJob?: string
+}
+
+// What an export through the journal showed about its checkpoints is kept for
+// the next one to choose the length of a part from.
+function rememberCheckpoints(result: ExportResult): void {
+  if (!result.journal) return
+  const found = measurementOf(result.journal, result.duration)
+  if (found) saveMeasurement(result.settings.mode, found)
+}
 
 // Runs one export at a time and keeps its progress, result and download link.
 export function useExportJob() {
@@ -36,7 +50,7 @@ export function useExportJob() {
   }, [])
 
   const start = useCallback(
-    async (project: ExportProject, settings: ExportSettings) => {
+    async (project: ExportProject, settings: ExportSettings, extra: StartExtra = {}) => {
       controllerRef.current?.abort()
       releaseUrl()
       const controller = new AbortController()
@@ -45,8 +59,9 @@ export function useExportJob() {
       let lastReport = 0
       setState({ phase: 'running', progress: null, startedAt })
       try {
-        const result = await runExport(project, settings, {
+        const result = await runExportJob(project, settings, {
           signal: controller.signal,
+          ...(extra.resumeJob !== undefined ? { resumeJob: extra.resumeJob } : {}),
           onProgress: (progress) => {
             const now = performance.now()
             const finished = progress.time >= progress.total
@@ -60,6 +75,7 @@ export function useExportJob() {
           void result.release()
           return
         }
+        rememberCheckpoints(result)
         const url = URL.createObjectURL(result.blob)
         urlRef.current = url
         resultRef.current = result

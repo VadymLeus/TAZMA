@@ -20,7 +20,7 @@ import type { Segment } from './plan.ts'
 import { FALLBACK_FRAME, MIN_FRAME, audioItems, openProject } from './shared.ts'
 import type { AudioItem } from './shared.ts'
 import { ExportAborted } from './types.ts'
-import type { ExportOptions, ExportProject, ExportResult, ExportSettings } from './types.ts'
+import type { ExportOptions, ExportProject, ExportResult, VideoSettings } from './types.ts'
 
 export type { ExportProject } from './types.ts'
 
@@ -34,11 +34,11 @@ const closeItem = (item: { sample: VideoSample | AudioSample }) => item.sample.c
 // decoded and encoded again as well.
 export async function exportProject(
   project: ExportProject,
-  settings: ExportSettings,
+  settings: VideoSettings,
   options: ExportOptions = {},
 ): Promise<ExportResult> {
   const { clips, texts, sources } = project
-  const { signal, onProgress } = options
+  const { signal, onProgress, flow } = options
   const total = timelineDuration(clips)
   if (clips.length === 0 || total <= 0) throw new Error('Таймлайн порожній.')
 
@@ -58,7 +58,11 @@ export async function exportProject(
     const ctx = canvas.getContext('2d')
     if (!ctx) throw new Error('Не вдалося створити полотно для кадрів.')
     const quality = new Quality(settings.quality)
-    const videoSource = new CanvasSource(canvas, { codec: settings.videoCodec, quality })
+    const videoSource = new CanvasSource(canvas, {
+      codec: settings.videoCodec,
+      quality,
+      ...(flow ? { onEncodedPacket: () => flow.encoded(1) } : {}),
+    })
     output.addVideoTrack(videoSource)
     let audioSource: AudioSampleSource | null = null
     if (hasAudio) {
@@ -87,6 +91,9 @@ export async function exportProject(
         item.sample.close()
         throw new ExportAborted()
       }
+      // A frame that went on to the encoder keeps its place in the pipeline
+      // until the encoder has made its packet.
+      let handedOn = false
       try {
         if (item.kind === 'video') {
           const { segment, sample, time } = item
@@ -95,6 +102,7 @@ export async function exportProject(
           if (duration < MIN_FRAME) continue
           composeFrame(ctx, size.width, size.height, sample, segment.clip.effect, texts, time)
           await videoSource.add(time, duration)
+          handedOn = true
           frames++
           encodedSeconds += duration
           onProgress?.({ time: time + duration, total, frames })
@@ -102,6 +110,7 @@ export async function exportProject(
           await audioSource.add(item.sample)
         }
       } finally {
+        if (handedOn) flow?.handOff()
         item.sample.close()
       }
     }
@@ -109,6 +118,7 @@ export async function exportProject(
     videoSource.close()
     audioSource?.close()
     await output.finalize()
+    flow?.settle()
 
     const mimeType = await output.getMimeType()
     const blob = await sink.finish(mimeType)
@@ -123,6 +133,8 @@ export async function exportProject(
       height: size.height,
       duration: total,
       hasAudio,
+      notes: opened.notes,
+      file: finished.name,
       settings,
       stats: {
         mode: 'full',

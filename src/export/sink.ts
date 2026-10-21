@@ -11,6 +11,8 @@ const CHUNK_SIZE = 8 * 1024 * 1024
 export interface ResultSink {
   target: Target
   onDisk: boolean
+  // Name of the file in the private storage; null when the file is in memory.
+  name: string | null
   // The finished file; call after the output is finalized.
   finish(mimeType: string): Promise<Blob>
   // Removes what was written.
@@ -28,6 +30,13 @@ async function openDirectory(): Promise<FileSystemDirectoryHandle | null> {
   }
 }
 
+// Removes one file by the name a sink gave. Safe to call from any thread: the
+// export may run in a worker and the page frees the file later.
+export async function removeExportFile(name: string): Promise<void> {
+  const directory = await openDirectory()
+  await directory?.removeEntry(name).catch(() => {})
+}
+
 // Removes the files of earlier exports.
 export async function clearExportFiles(): Promise<void> {
   const directory = await openDirectory()
@@ -42,6 +51,7 @@ function memorySink(): ResultSink {
   return {
     target,
     onDisk: false,
+    name: null,
     finish: async (mimeType) => {
       const buffer = target.buffer
       if (!buffer) throw new Error('Експорт не створив файл.')
@@ -62,6 +72,7 @@ export async function createSink(extension: string): Promise<ResultSink> {
     return {
       target: new StreamTarget(writable, { chunked: true, chunkSize: CHUNK_SIZE }),
       onDisk: true,
+      name,
       finish: async (mimeType) => {
         const file = await handle.getFile()
         return new Blob([file], { type: mimeType })

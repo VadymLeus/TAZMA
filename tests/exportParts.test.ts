@@ -4,6 +4,7 @@ import { describe, it } from 'node:test'
 import { silenceChunks, trimWindow } from '../src/export/audio.ts'
 import { remixToStereo, resampleLinear } from '../src/export/audioFormat.ts'
 import {
+  GIF_DEFAULT_FPS,
   availableContainers,
   defaultSettings,
   exportFileName,
@@ -219,7 +220,7 @@ describe('export settings', () => {
       mp4: { video: [], audio: [] },
       webm: { video: ['vp9'], audio: ['opus'] },
     } as never
-    assert.deepEqual(availableContainers(choices), ['webm'])
+    assert.deepEqual(availableContainers(choices), ['webm', 'gif'])
     assert.equal(normalizeSettings(defaultSettings, choices, []).container, 'webm')
   })
 
@@ -240,6 +241,38 @@ describe('export settings', () => {
 
   it('names the file by container', () => {
     assert.equal(exportFileName('webm'), 'tazma-export.webm')
+    assert.equal(exportFileName('gif'), 'tazma-export.gif')
+  })
+
+  it('offers GIF even when no video codec can be encoded', () => {
+    const none = {
+      mp4: { video: [], audio: [] },
+      webm: { video: [], audio: [] },
+    } as never
+    assert.deepEqual(availableContainers(none), ['gif'])
+    assert.equal(normalizeSettings(defaultSettings, none, []).container, 'gif')
+  })
+
+  it('keeps GIF settings and fixes a frame rate that is not offered', () => {
+    const gif = withContainer(defaultSettings, 'gif')
+    assert.equal(normalizeSettings(gif, both, []).container, 'gif')
+    assert.equal(normalizeSettings({ ...gif, gifFps: 17 }, both, []).gifFps, GIF_DEFAULT_FPS)
+    assert.equal(normalizeSettings({ ...gif, gifFps: 25 }, both, []).gifFps, 25)
+  })
+
+  it('starts GIF from a frame that is not too large', () => {
+    const heights = [1080, 720, 480, 360]
+    assert.equal(withContainer(defaultSettings, 'gif', heights).height, 480)
+    assert.equal(withContainer({ ...defaultSettings, height: 360 }, 'gif', heights).height, 360)
+    assert.equal(withContainer({ ...defaultSettings, height: 720 }, 'gif', heights).height, 480)
+    assert.equal(withContainer(defaultSettings, 'gif', []).height, null)
+    assert.equal(withContainer(defaultSettings, 'gif', [1080, 720]).height, null)
+  })
+
+  it('returns to the video codecs after GIF', () => {
+    const back = withContainer(withContainer(defaultSettings, 'gif'), 'webm')
+    assert.equal(back.container, 'webm')
+    assert.equal(back.videoCodec, 'vp9')
   })
 })
 

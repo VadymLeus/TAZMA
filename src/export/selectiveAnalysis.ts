@@ -20,7 +20,7 @@ import type {
 import { openProject } from './shared.ts'
 import type { OpenedProject } from './shared.ts'
 import { ExportAborted } from './types.ts'
-import type { ExportProject, ExportSettings } from './types.ts'
+import type { ExportProject, VideoSettings } from './types.ts'
 
 export interface EncoderProbe {
   // The decoder config our encoder attaches to its output; the output track
@@ -40,7 +40,7 @@ export function toBytes(data: AllowSharedBufferSource | undefined | null): Uint8
 // Encodes one black frame to learn the stream parameters the encoder produces
 // for these settings; they decide whether source packets can share the track.
 export async function probeEncoder(
-  settings: ExportSettings,
+  settings: VideoSettings,
   size: FrameSize,
 ): Promise<EncoderProbe> {
   const canvas = new OffscreenCanvas(size.width, size.height)
@@ -117,7 +117,7 @@ export interface ProjectAnalysis {
 export async function analyzeProject(
   segments: Segment[],
   opened: OpenedProject,
-  settings: ExportSettings,
+  settings: VideoSettings,
   size: FrameSize,
   signal?: AbortSignal,
 ): Promise<ProjectAnalysis> {
@@ -173,7 +173,7 @@ export interface ProjectPlan {
 // encoding anything; the export dialog shows this before the start.
 export async function planProject(
   project: ExportProject,
-  settings: ExportSettings,
+  settings: VideoSettings,
   signal?: AbortSignal,
 ): Promise<ProjectPlan> {
   const total = timelineDuration(project.clips)

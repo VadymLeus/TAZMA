@@ -47,16 +47,16 @@ export default function DropZone({ onFiles, compact = false }: DropZoneProps) {
       <input
         type="file"
         multiple
-        accept="video/*,.mkv,.webm,.mp4,.m4v,.mov"
+        accept="video/*,image/gif,.mkv,.webm,.mp4,.m4v,.mov,.gif"
         onChange={handleChange}
       />
       {compact ? (
         <span>Додати файли</span>
       ) : (
         <>
-          <strong>Перетягніть відеофайли сюди</strong>
+          <strong>Перетягніть відеофайли або GIF сюди</strong>
           <span>або натисніть, щоб вибрати їх на комп'ютері</span>
-          <span className="hint">MP4, WebM, MKV, MOV</span>
+          <span className="hint">MP4, WebM, MKV, MOV, GIF</span>
         </>
       )}
     </label>

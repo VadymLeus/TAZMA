@@ -66,3 +66,16 @@ export function formatSpan(seconds: number): string {
   if (!Number.isFinite(seconds) || seconds < 0) return '—'
   return `${seconds.toFixed(1).replace('.', ',')} с`
 }
+
+// "кадр", "кадри" or "кадрів" for a count: 1 кадр, 3 кадри, 5 кадрів, 11 кадрів.
+export function framesWord(count: number): string {
+  const n = Math.abs(Math.round(count))
+  const rest = n % 100
+  const last = n % 10
+  if (rest >= 11 && rest <= 14) return 'кадрів'
+  if (last === 1) return 'кадр'
+  if (last >= 2 && last <= 4) return 'кадри'
+  return 'кадрів'
+}
+
+export const framesText = (count: number): string => `${count} ${framesWord(count)}`

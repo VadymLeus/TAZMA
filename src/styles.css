@@ -67,7 +67,9 @@ body {
   font-size: 14px;
 }
 
-.header-action {
+.header-actions {
+  display: flex;
+  gap: 8px;
   margin-left: auto;
 }
 
@@ -94,6 +96,7 @@ body {
 .error {
   color: var(--danger);
   overflow-wrap: anywhere;
+  white-space: pre-line;
 }
 
 .notice {
@@ -753,10 +756,168 @@ textarea:focus-visible {
   font-size: 14px;
 }
 
+.resume-jobs {
+  display: grid;
+  gap: 10px;
+  margin: 14px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.resume-job {
+  padding: 10px 12px;
+  font-size: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.resume-job p {
+  margin: 4px 0 0;
+}
+
+.resume-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.resume-sources,
+.resume-problems {
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.resume-problems {
+  padding-left: 16px;
+  list-style: disc;
+}
+
+.resume-missing {
+  color: var(--danger);
+}
+
+.resume-found > span:first-child {
+  color: var(--accent);
+}
+
+.resume-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.resume-confirm {
+  margin-right: auto;
+  font-size: 13px;
+}
+
+.resume-empty {
+  margin: 14px 0 0;
+}
+
+.btn-danger {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+.segment-hint {
+  margin: 4px 0 0;
+  font-size: 13px;
+}
+
 .dialog-actions {
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 8px;
   margin-top: 20px;
+}
+
+.memory-report {
+  margin: 0 0 16px;
+  padding: 10px 12px;
+  font-size: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.memory-report summary {
+  cursor: pointer;
+}
+
+.memory-report .btn {
+  display: inline-block;
+  margin-top: 10px;
+}
+
+.chart {
+  margin: 12px 0 0;
+}
+
+.chart-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+}
+
+.chart-read {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.chart svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  touch-action: pan-y;
+}
+
+.chart-grid {
+  stroke: var(--line);
+  stroke-width: 1;
+}
+
+.chart-tick {
+  fill: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.chart-line {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.chart-area {
+  fill: var(--accent);
+  opacity: 0.1;
+}
+
+.chart-dot {
+  fill: var(--accent);
+  stroke: var(--panel);
+  stroke-width: 2;
+}
+
+.chart-cross {
+  stroke: var(--muted);
+  stroke-width: 1;
+}
+
+.chart-limit {
+  fill: none;
+  stroke: var(--muted);
+  stroke-width: 1.5;
+  stroke-dasharray: 5 4;
 }
