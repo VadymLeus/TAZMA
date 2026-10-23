@@ -31,17 +31,20 @@ export default function VideoPreview({
   onToggle,
 }: VideoPreviewProps) {
   return (
-    <section className="card">
-      <div
-        className="screen"
-        style={{ '--ratio': frame.width / frame.height } as CSSProperties}
-      >
-        <video ref={videoRef} playsInline preload="auto" style={{ filter }} />
-        <TextOverlay texts={texts} />
-        {!hasClips && <div className="screen-empty">Таймлайн порожній</div>}
+    <section className="viewer">
+      <div className="viewer-stage">
+        <div
+          className="screen"
+          style={{ '--ratio': frame.width / frame.height } as CSSProperties}
+        >
+          <video ref={videoRef} playsInline preload="auto" style={{ filter }} />
+          <TextOverlay texts={texts} />
+          {!hasClips && <div className="screen-empty">Таймлайн порожній</div>}
+        </div>
       </div>
       {error && <p className="notice">{error}</p>}
       <div className="transport">
+        <span className="time time-now">{formatDuration(playhead)}</span>
         <button
           type="button"
           className="btn btn-icon"
@@ -58,9 +61,7 @@ export default function VideoPreview({
             )}
           </svg>
         </button>
-        <span className="time">
-          {formatDuration(playhead)} / {formatDuration(total)}
-        </span>
+        <span className="time">{formatDuration(total)}</span>
       </div>
     </section>
   )

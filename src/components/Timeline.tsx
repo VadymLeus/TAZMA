@@ -11,6 +11,8 @@ const TICK_STEPS = [0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 
 const MIN_TICK_GAP = 80
 const MAX_TICKS = 600
 const LANE = 26
+// Width of the column with track names; the same number is in styles.css.
+const HEAD_WIDTH = 68
 
 function tickLabel(seconds: number, step: number): string {
   const tenthsTotal = Math.round(seconds * 10)
@@ -57,12 +59,15 @@ export default function Timeline({
   const dragging = useRef(false)
   const [viewWidth, setViewWidth] = useState(0)
 
+  // The scroll area holds the track names too (they stick to its left edge),
+  // so the room for the tracks is what is left of its width.
   useEffect(() => {
     const element = scrollRef.current
     if (!element) return
-    const observer = new ResizeObserver(() => setViewWidth(element.clientWidth))
+    const measure = () => setViewWidth(Math.max(0, element.clientWidth - HEAD_WIDTH))
+    const observer = new ResizeObserver(measure)
     observer.observe(element)
-    setViewWidth(element.clientWidth)
+    measure()
     return () => observer.disconnect()
   }, [])
 
@@ -74,8 +79,9 @@ export default function Timeline({
     const element = scrollRef.current
     if (!element || dragging.current || pps === 0) return
     const x = playhead * pps
-    if (x < element.scrollLeft || x > element.scrollLeft + element.clientWidth) {
-      element.scrollLeft = Math.max(0, x - element.clientWidth / 2)
+    const room = element.clientWidth - HEAD_WIDTH
+    if (x < element.scrollLeft || x > element.scrollLeft + room) {
+      element.scrollLeft = Math.max(0, x - room / 2)
     }
   }, [playhead, pps])
 
@@ -87,6 +93,7 @@ export default function Timeline({
   }
 
   const { lane, count: laneCount } = assignLanes(texts)
+  const textHeight = laneCount * LANE + 8
   const hueOf = new Map(sources.map((s, i) => [s.id, (i * 67) % 360]))
   const nameOf = new Map(sources.map((s) => [s.id, s.info.fileName]))
 
@@ -117,85 +124,101 @@ export default function Timeline({
 
   if (clips.length === 0) {
     return (
-      <div className="timeline-scroll" ref={scrollRef}>
+      <div className="timeline" ref={scrollRef}>
         <p className="muted timeline-empty">
-          Таймлайн порожній: додайте кліп кнопкою +
+          Таймлайн порожній: додайте кліп кнопкою + біля файлу в медіатеці
         </p>
       </div>
     )
   }
 
   return (
-    <div className="timeline-scroll" ref={scrollRef}>
-      <div
-        className="timeline-content"
-        style={{ width: contentWidth }}
-        onPointerDown={handleDown}
-        onPointerMove={handleMove}
-        onPointerUp={handleUp}
-        onPointerCancel={handleUp}
-      >
-        <div className="ruler">
-          {ticks.map((t) => (
-            <span key={t} className="tick" style={{ left: t * pps }}>
-              {tickLabel(t, step)}
-            </span>
-          ))}
+    <div className="timeline" ref={scrollRef}>
+      <div className="timeline-inner">
+        <div className="timeline-heads">
+          <div className="head head-time" title="Позиція курсора">
+            {formatDuration(playhead)}
+          </div>
+          <div className="head head-video" title="Відеодоріжка">
+            V1
+          </div>
+          <div className="head head-text" style={{ height: textHeight }} title="Доріжка написів">
+            T1
+          </div>
+          <div className="head head-recompute" title="Ділянки, що потребують перерахунку при експорті">
+            ↻
+          </div>
         </div>
-        <div className="track">
-          {clips.map((clip) => (
-            <div
-              key={clip.id}
-              data-clip-id={clip.id}
-              className={clip.id === selectedClipId ? 'clip clip-selected' : 'clip'}
-              style={
-                {
-                  width: clipLength(clip) * pps,
-                  '--hue': hueOf.get(clip.sourceId) ?? 0,
-                } as CSSProperties
-              }
-              title={nameOf.get(clip.sourceId)}
-            >
-              <span className="clip-name">{nameOf.get(clip.sourceId)}</span>
-              <span className="clip-length">{formatDuration(clipLength(clip))}</span>
-            </div>
-          ))}
+        <div
+          className="timeline-content"
+          style={{ width: contentWidth }}
+          onPointerDown={handleDown}
+          onPointerMove={handleMove}
+          onPointerUp={handleUp}
+          onPointerCancel={handleUp}
+        >
+          <div className="ruler">
+            {ticks.map((t) => (
+              <span key={t} className="tick" style={{ left: t * pps }}>
+                {tickLabel(t, step)}
+              </span>
+            ))}
+          </div>
+          <div className="track">
+            {clips.map((clip) => (
+              <div
+                key={clip.id}
+                data-clip-id={clip.id}
+                className={clip.id === selectedClipId ? 'clip clip-selected' : 'clip'}
+                style={
+                  {
+                    width: clipLength(clip) * pps,
+                    '--hue': hueOf.get(clip.sourceId) ?? 0,
+                  } as CSSProperties
+                }
+                title={nameOf.get(clip.sourceId)}
+              >
+                <span className="clip-name">{nameOf.get(clip.sourceId)}</span>
+                <span className="clip-length">{formatDuration(clipLength(clip))}</span>
+              </div>
+            ))}
+          </div>
+          <div className="track-text" style={{ height: textHeight }}>
+            {texts.length === 0 && (
+              <span className="track-hint">Тут з'являться написи</span>
+            )}
+            {texts.map((text) => (
+              <div
+                key={text.id}
+                data-text-id={text.id}
+                className={
+                  text.id === selectedTextId ? 'text-block text-selected' : 'text-block'
+                }
+                style={{
+                  left: text.start * pps,
+                  width: (text.end - text.start) * pps,
+                  top: 4 + (lane.get(text.id) ?? 0) * LANE,
+                }}
+                title={text.text}
+              >
+                {text.text}
+              </div>
+            ))}
+          </div>
+          <div className="track-recompute">
+            {recompute.map((range) => (
+              <div
+                key={range.start}
+                className="recompute-range"
+                style={{
+                  left: range.start * pps,
+                  width: (range.end - range.start) * pps,
+                }}
+              />
+            ))}
+          </div>
+          <div className="playhead" style={{ left: playhead * pps }} />
         </div>
-        <div className="track-text" style={{ height: laneCount * LANE + 8 }}>
-          {texts.length === 0 && (
-            <span className="track-hint">Тут з'являться написи</span>
-          )}
-          {texts.map((text) => (
-            <div
-              key={text.id}
-              data-text-id={text.id}
-              className={
-                text.id === selectedTextId ? 'text-block text-selected' : 'text-block'
-              }
-              style={{
-                left: text.start * pps,
-                width: (text.end - text.start) * pps,
-                top: 4 + (lane.get(text.id) ?? 0) * LANE,
-              }}
-              title={text.text}
-            >
-              {text.text}
-            </div>
-          ))}
-        </div>
-        <div className="track-recompute">
-          {recompute.map((range) => (
-            <div
-              key={range.start}
-              className="recompute-range"
-              style={{
-                left: range.start * pps,
-                width: (range.end - range.start) * pps,
-              }}
-            />
-          ))}
-        </div>
-        <div className="playhead" style={{ left: playhead * pps }} />
       </div>
     </div>
   )

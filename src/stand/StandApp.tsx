@@ -69,7 +69,13 @@ const positive = (text: string): number | null => {
 
 const aborted = (error: unknown) => error instanceof Error && error.name === 'AbortError'
 
-export default function StandApp() {
+interface StandAppProps {
+  embedded?: boolean
+  // The editor of the same page holds files; the stand warns about it.
+  editorLoaded?: boolean
+}
+
+export default function StandApp({ embedded = false, editorLoaded = false }: StandAppProps) {
   const [source, setSource] = useState<Source | null>(null)
   const [fileError, setFileError] = useState('')
   const [choices, setChoices] = useState<ContainerChoices | null>(null)
@@ -348,325 +354,348 @@ export default function StandApp() {
   }
 
   return (
-    <div className="app stand">
-      <header className="app-header">
-        <span className="brand">TAZMA</span>
-        <span className="stage">Стенд замірів</span>
-        <div className="header-actions">
-          <a className="btn" href={window.location.pathname}>
-            До редактора
-          </a>
-        </div>
-      </header>
+    <div className={embedded ? 'stand stand-page' : 'app stand'}>
+      {!embedded && (
+        <header className="app-header">
+          <span className="brand">TAZMA</span>
+          <span className="stage">Стенд замірів</span>
+          <div className="header-actions">
+            <a className="btn" href={window.location.pathname}>
+              До редактора
+            </a>
+          </div>
+        </header>
+      )}
 
-      <section className="card">
-        <h2>Файл і налаштування</h2>
-        <label className="field">
-          <span>Відеофайл для замірів</span>
-          <input
-            type="file"
-            accept="video/*,.mkv,.webm,.mp4,.m4v,.mov"
-            disabled={running}
-            onChange={(event: ChangeEvent<HTMLInputElement>) => void pick(event)}
-          />
-        </label>
-        {fileError && <p className="error">{fileError}</p>}
-        {info?.video && (
-          <p className="muted export-note">
-            {info.fileName} · {formatSpan(info.duration)} · {info.video.width}×{info.video.height} · {info.video.codec} ·{' '}
-            {Math.round(info.video.frameRate * 100) / 100} к/с · {formatBytes(info.fileSize)}
+      <section className="card stand-side">
+        {editorLoaded && (
+          <p className="notice stand-warn">
+            У редакторі відкрито файли. Вони лишаються в пам’яті сторінки (відео, ключові кадри) і можуть змінити цифри,
+            особливо пам’яті. Для чистих замірів відкрийте стенд у свіжій вкладці за адресою /?stand, без файлів у редакторі.
           </p>
         )}
+        <div className="group">
+          <h3>Файл</h3>
+          <label className="field">
+            <span>Відеофайл для замірів</span>
+            <input
+              type="file"
+              accept="video/*,.mkv,.webm,.mp4,.m4v,.mov"
+              disabled={running}
+              onChange={(event: ChangeEvent<HTMLInputElement>) => void pick(event)}
+            />
+          </label>
+          {fileError && <p className="error">{fileError}</p>}
+          {info?.video && (
+            <p className="muted export-note">
+              {info.fileName} · {formatSpan(info.duration)} · {info.video.width}×{info.video.height} · {info.video.codec} ·{' '}
+              {Math.round(info.video.frameRate * 100) / 100} к/с · {formatBytes(info.fileSize)}
+            </p>
+          )}
+        </div>
         {choices && (
           <>
-            <div className="field-row">
-              <label className="field">
-                <span>Формат</span>
-                <select
-                  value={settings.container}
-                  disabled={running}
-                  onChange={(event: ChangeEvent<HTMLSelectElement>) =>
-                    setBase(withContainer(settings, event.target.value as Container))
-                  }
-                >
-                  {containers.map((container) => (
-                    <option key={container} value={container}>
-                      {CONTAINER_LABELS[container]}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="field">
-                <span>Відеокодек</span>
-                <select
-                  value={settings.videoCodec}
-                  disabled={running}
-                  onChange={(event: ChangeEvent<HTMLSelectElement>) =>
-                    setBase({ ...settings, videoCodec: event.target.value as ExportSettings['videoCodec'] })
-                  }
-                >
-                  {codecs?.video.map((codec) => (
-                    <option key={codec} value={codec}>
-                      {VIDEO_LABELS[codec] ?? codec}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="field">
-                <span>Аудіокодек</span>
-                <select
-                  value={settings.audioCodec}
-                  disabled={running || !codecs || codecs.audio.length === 0}
-                  onChange={(event: ChangeEvent<HTMLSelectElement>) =>
-                    setBase({ ...settings, audioCodec: event.target.value as ExportSettings['audioCodec'] })
-                  }
-                >
-                  {codecs?.audio.map((codec) => (
-                    <option key={codec} value={codec}>
-                      {AUDIO_LABELS[codec] ?? codec}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="field">
-                <span>Якість</span>
-                <select
-                  value={settings.quality}
-                  disabled={running}
-                  onChange={(event: ChangeEvent<HTMLSelectElement>) =>
-                    setBase({ ...settings, quality: event.target.value as QualityLevel })
-                  }
-                >
-                  {(Object.keys(QUALITY) as QualityLevel[]).map((level) => (
-                    <option key={level} value={level}>
-                      {QUALITY[level]}
-                    </option>
-                  ))}
-                </select>
-              </label>
+            <div className="group">
+              <h3>Запис</h3>
+              <div className="field-row">
+                <label className="field">
+                  <span>Формат</span>
+                  <select
+                    value={settings.container}
+                    disabled={running}
+                    onChange={(event: ChangeEvent<HTMLSelectElement>) =>
+                      setBase(withContainer(settings, event.target.value as Container))
+                    }
+                  >
+                    {containers.map((container) => (
+                      <option key={container} value={container}>
+                        {CONTAINER_LABELS[container]}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="field">
+                  <span>Відеокодек</span>
+                  <select
+                    value={settings.videoCodec}
+                    disabled={running}
+                    onChange={(event: ChangeEvent<HTMLSelectElement>) =>
+                      setBase({ ...settings, videoCodec: event.target.value as ExportSettings['videoCodec'] })
+                    }
+                  >
+                    {codecs?.video.map((codec) => (
+                      <option key={codec} value={codec}>
+                        {VIDEO_LABELS[codec] ?? codec}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="field">
+                  <span>Аудіокодек</span>
+                  <select
+                    value={settings.audioCodec}
+                    disabled={running || !codecs || codecs.audio.length === 0}
+                    onChange={(event: ChangeEvent<HTMLSelectElement>) =>
+                      setBase({ ...settings, audioCodec: event.target.value as ExportSettings['audioCodec'] })
+                    }
+                  >
+                    {codecs?.audio.map((codec) => (
+                      <option key={codec} value={codec}>
+                        {AUDIO_LABELS[codec] ?? codec}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="field">
+                  <span>Якість</span>
+                  <select
+                    value={settings.quality}
+                    disabled={running}
+                    onChange={(event: ChangeEvent<HTMLSelectElement>) =>
+                      setBase({ ...settings, quality: event.target.value as QualityLevel })
+                    }
+                  >
+                    {(Object.keys(QUALITY) as QualityLevel[]).map((level) => (
+                      <option key={level} value={level}>
+                        {QUALITY[level]}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
             </div>
-            <div className="field-row">
-              <label className="field">
-                <span>Бюджет пам’яті на кадри (режим «Авто»)</span>
-                <select
-                  value={settings.memoryBudget}
+            <div className="group">
+              <h3>Пам’ять і потік</h3>
+              <div className="field-row">
+                <label className="field">
+                  <span>Бюджет пам’яті на кадри (режим «Авто»)</span>
+                  <select
+                    value={settings.memoryBudget}
+                    disabled={running}
+                    onChange={(event: ChangeEvent<HTMLSelectElement>) => setBase({ ...settings, memoryBudget: Number(event.target.value) })}
+                  >
+                    {MEMORY_BUDGETS.map((budget) => (
+                      <option key={budget} value={budget}>
+                        {budget} МБ
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <label className="check">
+                <input
+                  type="checkbox"
+                  checked={settings.inWorker !== false}
                   disabled={running}
-                  onChange={(event: ChangeEvent<HTMLSelectElement>) => setBase({ ...settings, memoryBudget: Number(event.target.value) })}
-                >
-                  {MEMORY_BUDGETS.map((budget) => (
-                    <option key={budget} value={budget}>
-                      {budget} МБ
-                    </option>
-                  ))}
-                </select>
+                  onChange={(event: ChangeEvent<HTMLInputElement>) => setBase({ ...settings, inWorker: event.target.checked })}
+                />
+                <span>Виконувати в окремому потоці (без нього видно купу JS на сторінці)</span>
               </label>
+              <label className="check">
+                <input
+                  type="checkbox"
+                  checked={settings.ignoreColor}
+                  disabled={running}
+                  onChange={(event: ChangeEvent<HTMLInputElement>) => setBase({ ...settings, ignoreColor: event.target.checked })}
+                />
+                <span>Не звіряти колірний простір (вибірковий експорт)</span>
+              </label>
+              <p className="muted export-note">
+                Кодувальник Chromium позначає кадри з полотна як BT.601, тож файли BT.709 (зазвичай HD) за звіркою не копіюються
+                зовсім. З галочкою копіювання працює, але колір скопійованих ділянок може відрізнятися від перерахованих, і
+                PSNR та SSIM у серіях частки й розрізів на таких файлах будуть занижені.
+              </p>
             </div>
-            <label className="check">
-              <input
-                type="checkbox"
-                checked={settings.inWorker !== false}
-                disabled={running}
-                onChange={(event: ChangeEvent<HTMLInputElement>) => setBase({ ...settings, inWorker: event.target.checked })}
-              />
-              <span>Виконувати в окремому потоці (без нього видно купу JS на сторінці)</span>
-            </label>
-            <label className="check">
-              <input
-                type="checkbox"
-                checked={settings.ignoreColor}
-                disabled={running}
-                onChange={(event: ChangeEvent<HTMLInputElement>) => setBase({ ...settings, ignoreColor: event.target.checked })}
-              />
-              <span>Не звіряти колірний простір (вибірковий експорт)</span>
-            </label>
-            <p className="muted export-note">
-              Кодувальник Chromium позначає кадри з полотна як BT.601, тож файли BT.709 (зазвичай HD) за звіркою не копіюються
-              зовсім. З галочкою копіювання працює, але колір скопійованих ділянок може відрізнятися від перерахованих, і
-              PSNR та SSIM у серіях частки й розрізів на таких файлах будуть занижені.
-            </p>
           </>
         )}
       </section>
 
-      <section className="card">
-        <h2>Серія</h2>
-        <div className="stand-series">
-          {SERIES_CHOICES.map((choice) => (
-            <label key={choice.id} className="check">
-              <input
-                type="radio"
-                name="series"
-                checked={seriesId === choice.id}
-                disabled={running}
-                onChange={() => setSeriesId(choice.id)}
-              />
-              <span>{choice.title}</span>
-            </label>
-          ))}
-        </div>
-        <p className="muted export-note">{series.note}</p>
-        <div className="field-row">
-          <label className="field">
-            <span>Фрагмент, с (0 — весь файл)</span>
-            <input type="number" min="0" step="any" value={seconds} disabled={running} onChange={(e: ChangeEvent<HTMLInputElement>) => setSeconds(e.target.value)} />
-          </label>
-          <label className="field">
-            <span>Повторів</span>
-            <input type="number" min="1" step="1" value={repeats} disabled={running} onChange={(e: ChangeEvent<HTMLInputElement>) => setRepeats(e.target.value)} />
-          </label>
-          <label className="field">
-            <span>Прогрівальних прогонів</span>
-            <input type="number" min="0" step="1" value={warmup} disabled={running} onChange={(e: ChangeEvent<HTMLInputElement>) => setWarmup(e.target.value)} />
-          </label>
-        </div>
-        <div className="field-row">
-          <label className="field">
-            <span>Пауза між прогонами, с</span>
-            <input type="number" min="0" step="any" value={coolDown} disabled={running} onChange={(e: ChangeEvent<HTMLInputElement>) => setCoolDown(e.target.value)} />
-          </label>
-          <label className="field">
-            <span>Зерно порядку</span>
-            <input type="number" step="1" value={seed} disabled={running} onChange={(e: ChangeEvent<HTMLInputElement>) => setSeed(e.target.value)} />
-          </label>
-          {seriesId === 'flow' && (
-            <label className="field">
-              <span>Ліміти N</span>
-              <input type="text" value={limitsText} disabled={running} onChange={(e: ChangeEvent<HTMLInputElement>) => setLimitsText(e.target.value)} />
-            </label>
-          )}
-          {seriesId === 'interval' && (
-            <>
-              <label className="field">
-                <span>Довжини частини, с</span>
-                <input type="text" value={intervalsText} disabled={running} onChange={(e: ChangeEvent<HTMLInputElement>) => setIntervalsText(e.target.value)} />
-              </label>
-              <label className="field">
-                <span>Середній проміжок між обривами M, с</span>
-                <input type="number" min="0" step="any" value={mtbf} disabled={running} onChange={(e: ChangeEvent<HTMLInputElement>) => setMtbf(e.target.value)} />
-              </label>
-            </>
-          )}
-          {seriesId === 'share' && (
-            <>
-              <label className="field">
-                <span>Частки ефекту, %</span>
-                <input type="text" value={sharesText} disabled={running} onChange={(e: ChangeEvent<HTMLInputElement>) => setSharesText(e.target.value)} />
-              </label>
-              <label className="field">
-                <span>Розрізів у проєкті</span>
-                <input type="number" min="0" max={MAX_CUTS} step="1" value={cutsFixed} disabled={running} onChange={(e: ChangeEvent<HTMLInputElement>) => setCutsFixed(e.target.value)} />
-              </label>
-            </>
-          )}
-          {seriesId === 'cuts' && (
-            <>
-              <label className="field">
-                <span>Числа розрізів</span>
-                <input type="text" value={countsText} disabled={running} onChange={(e: ChangeEvent<HTMLInputElement>) => setCountsText(e.target.value)} />
-              </label>
-              <label className="field">
-                <span>Частка ефекту, %</span>
-                <input type="number" min="0" max="100" step="any" value={shareFixed} disabled={running} onChange={(e: ChangeEvent<HTMLInputElement>) => setShareFixed(e.target.value)} />
-              </label>
-            </>
-          )}
-          {(seriesId === 'share' || seriesId === 'cuts') && (
-            <>
-              <label className="field">
-                <span>Що покриває частку</span>
-                <select value={kind} disabled={running} onChange={(e: ChangeEvent<HTMLSelectElement>) => setKind(e.target.value as 'text' | 'effect')}>
-                  <option value="text">Напис</option>
-                  <option value="effect">Фільтр (чорно-біле)</option>
-                </select>
-              </label>
-              <label className="field">
-                <span>Кадрів для порівняння якості (0 — без)</span>
-                <input type="number" min="0" step="1" value={qualityFrames} disabled={running} onChange={(e: ChangeEvent<HTMLInputElement>) => setQualityFrames(e.target.value)} />
-              </label>
-            </>
-          )}
-          {seriesId === 'journal' && (
-            <label className="field">
-              <span>Довжина частини, с</span>
-              <input type="number" min="2" max="600" step="any" value={segment} disabled={running} onChange={(e: ChangeEvent<HTMLInputElement>) => setSegment(e.target.value)} />
-            </label>
-          )}
-        </div>
-        {(seriesId === 'share' || seriesId === 'cuts' || seriesId === 'components') && info?.video && info.video.codec !== settings.videoCodec && (
-          <p className="error export-note">
-            Відео у файлі — {info.video.codec}, а для запису вибрано {settings.videoCodec}: вибірковий експорт копіює пакети лише коли
-            кодеки збігаються, тож нічого не скопіює. Оберіть відеокодек файлу.
-          </p>
-        )}
-        {copies && planState.phase !== 'idle' && (
-          <>
-            <p className="muted export-note">План вибіркового експорту для всього фрагмента, без написів і розрізів:</p>
-            <PlanNote state={planState} sources={source ? [source] : []} />
-            {(seriesId === 'share' || seriesId === 'cuts') &&
-              planState.phase === 'ready' &&
-              planState.plan.summary.copySeconds < 0.01 && (
-                <p className="error export-note">
-                  За планом нічого не копіюється, серія з такими налаштуваннями покаже лише повне перекодування. Усуньте причину
-                  вище або увімкніть «Не звіряти колірний простір».
+      <div className="stand-main">
+        <section className="card stand-runbar">
+          <div className="stand-runrow">
+            <div className="stand-runtext">
+              {problem !== '' ? <span className="muted">{problem}</span> : <span className="muted">Прогонів: {total}</span>}
+              {status !== '' && (
+                <p className={refused ? 'error export-status' : 'export-status'} role="status">
+                  {status}
                 </p>
               )}
-          </>
-        )}
-        <p className="muted export-note">
-          Умови йдуть по черзі, порядок у кожному колі випадковий (за зерном). Для чесних цифр закрийте інші вкладки й
-          програми, не вимикайте ноутбук із мережі й не чіпайте сторінку під час серії.
-        </p>
-        <div className="dialog-actions stand-actions">
-          {problem !== '' ? <span className="muted">{problem}</span> : <span className="muted">Прогонів: {total}</span>}
-          {running ? (
-            <button type="button" className="btn" onClick={() => controller.current?.abort()}>
-              Зупинити
-            </button>
-          ) : (
-            <button type="button" className="btn btn-primary" disabled={problem !== ''} onClick={() => void start()}>
-              Запустити серію
-            </button>
-          )}
-        </div>
-        {(running || records.length > 0) && !refused && (
-          <progress
-            className="export-progress"
-            max={Math.max(overall.total, 1)}
-            value={overall.done + (running ? current : 0)}
-          />
-        )}
-        {status !== '' && (
-          <p className={refused ? 'error export-status' : 'export-status'} role="status">
-            {status}
-          </p>
-        )}
-      </section>
-
-      {shownSeries && records.length > 0 && (
-        <section className="card">
-          <h2>Результати: {shownSeries.title}</h2>
-          <StandResults series={shownSeries} records={records} />
-          <div className="dialog-actions">
-            <button type="button" className="btn" onClick={saveCsv}>
-              Зберегти CSV
-            </button>
-            <button type="button" className="btn" onClick={saveJson}>
-              Зберегти JSON
-            </button>
+            </div>
+            {running ? (
+              <button type="button" className="btn" onClick={() => controller.current?.abort()}>
+                Зупинити
+              </button>
+            ) : (
+              <button type="button" className="btn btn-primary" disabled={problem !== ''} onClick={() => void start()}>
+                Запустити серію
+              </button>
+            )}
           </div>
-          <details className="stand-runs">
-            <summary>Усі прогони ({records.length})</summary>
-            <ul>
-              {records.map((record) => (
-                <li key={record.index} className={record.ok ? undefined : 'error'}>
-                  {record.index + 1}. {record.label} · {record.warmup ? 'прогрів' : `коло ${record.round + 1}`} ·{' '}
-                  {record.ok && record.elapsedMs !== null ? `${(record.elapsedMs / 1000).toFixed(1).replace('.', ',')} с` : record.error}
-                </li>
-              ))}
-            </ul>
-          </details>
+          {(running || records.length > 0) && !refused && (
+            <progress
+              className="export-progress"
+              max={Math.max(overall.total, 1)}
+              value={overall.done + (running ? current : 0)}
+            />
+          )}
         </section>
-      )}
+
+        <section className="card">
+          <h2>Серія</h2>
+          <div className="stand-series">
+            {SERIES_CHOICES.map((choice) => (
+              <label key={choice.id} className="check">
+                <input
+                  type="radio"
+                  name="series"
+                  checked={seriesId === choice.id}
+                  disabled={running}
+                  onChange={() => setSeriesId(choice.id)}
+                />
+                <span>{choice.title}</span>
+              </label>
+            ))}
+          </div>
+          <p className="muted export-note">{series.note}</p>
+          <div className="field-row">
+            <label className="field">
+              <span>Фрагмент, с (0 — весь файл)</span>
+              <input type="number" min="0" step="any" value={seconds} disabled={running} onChange={(e: ChangeEvent<HTMLInputElement>) => setSeconds(e.target.value)} />
+            </label>
+            <label className="field">
+              <span>Повторів</span>
+              <input type="number" min="1" step="1" value={repeats} disabled={running} onChange={(e: ChangeEvent<HTMLInputElement>) => setRepeats(e.target.value)} />
+            </label>
+            <label className="field">
+              <span>Прогрівальних прогонів</span>
+              <input type="number" min="0" step="1" value={warmup} disabled={running} onChange={(e: ChangeEvent<HTMLInputElement>) => setWarmup(e.target.value)} />
+            </label>
+          </div>
+          <div className="field-row">
+            <label className="field">
+              <span>Пауза між прогонами, с</span>
+              <input type="number" min="0" step="any" value={coolDown} disabled={running} onChange={(e: ChangeEvent<HTMLInputElement>) => setCoolDown(e.target.value)} />
+            </label>
+            <label className="field">
+              <span>Зерно порядку</span>
+              <input type="number" step="1" value={seed} disabled={running} onChange={(e: ChangeEvent<HTMLInputElement>) => setSeed(e.target.value)} />
+            </label>
+            {seriesId === 'flow' && (
+              <label className="field">
+                <span>Ліміти N</span>
+                <input type="text" value={limitsText} disabled={running} onChange={(e: ChangeEvent<HTMLInputElement>) => setLimitsText(e.target.value)} />
+              </label>
+            )}
+            {seriesId === 'interval' && (
+              <>
+                <label className="field">
+                  <span>Довжини частини, с</span>
+                  <input type="text" value={intervalsText} disabled={running} onChange={(e: ChangeEvent<HTMLInputElement>) => setIntervalsText(e.target.value)} />
+                </label>
+                <label className="field">
+                  <span>Середній проміжок між обривами M, с</span>
+                  <input type="number" min="0" step="any" value={mtbf} disabled={running} onChange={(e: ChangeEvent<HTMLInputElement>) => setMtbf(e.target.value)} />
+                </label>
+              </>
+            )}
+            {seriesId === 'share' && (
+              <>
+                <label className="field">
+                  <span>Частки ефекту, %</span>
+                  <input type="text" value={sharesText} disabled={running} onChange={(e: ChangeEvent<HTMLInputElement>) => setSharesText(e.target.value)} />
+                </label>
+                <label className="field">
+                  <span>Розрізів у проєкті</span>
+                  <input type="number" min="0" max={MAX_CUTS} step="1" value={cutsFixed} disabled={running} onChange={(e: ChangeEvent<HTMLInputElement>) => setCutsFixed(e.target.value)} />
+                </label>
+              </>
+            )}
+            {seriesId === 'cuts' && (
+              <>
+                <label className="field">
+                  <span>Числа розрізів</span>
+                  <input type="text" value={countsText} disabled={running} onChange={(e: ChangeEvent<HTMLInputElement>) => setCountsText(e.target.value)} />
+                </label>
+                <label className="field">
+                  <span>Частка ефекту, %</span>
+                  <input type="number" min="0" max="100" step="any" value={shareFixed} disabled={running} onChange={(e: ChangeEvent<HTMLInputElement>) => setShareFixed(e.target.value)} />
+                </label>
+              </>
+            )}
+            {(seriesId === 'share' || seriesId === 'cuts') && (
+              <>
+                <label className="field">
+                  <span>Що покриває частку</span>
+                  <select value={kind} disabled={running} onChange={(e: ChangeEvent<HTMLSelectElement>) => setKind(e.target.value as 'text' | 'effect')}>
+                    <option value="text">Напис</option>
+                    <option value="effect">Фільтр (чорно-біле)</option>
+                  </select>
+                </label>
+                <label className="field">
+                  <span>Кадрів для порівняння якості (0 — без)</span>
+                  <input type="number" min="0" step="1" value={qualityFrames} disabled={running} onChange={(e: ChangeEvent<HTMLInputElement>) => setQualityFrames(e.target.value)} />
+                </label>
+              </>
+            )}
+            {seriesId === 'journal' && (
+              <label className="field">
+                <span>Довжина частини, с</span>
+                <input type="number" min="2" max="600" step="any" value={segment} disabled={running} onChange={(e: ChangeEvent<HTMLInputElement>) => setSegment(e.target.value)} />
+              </label>
+            )}
+          </div>
+          {(seriesId === 'share' || seriesId === 'cuts' || seriesId === 'components') && info?.video && info.video.codec !== settings.videoCodec && (
+            <p className="error export-note">
+              Відео у файлі — {info.video.codec}, а для запису вибрано {settings.videoCodec}: вибірковий експорт копіює пакети лише коли
+              кодеки збігаються, тож нічого не скопіює. Оберіть відеокодек файлу.
+            </p>
+          )}
+          {copies && planState.phase !== 'idle' && (
+            <>
+              <p className="muted export-note">План вибіркового експорту для всього фрагмента, без написів і розрізів:</p>
+              <PlanNote state={planState} sources={source ? [source] : []} />
+              {(seriesId === 'share' || seriesId === 'cuts') &&
+                planState.phase === 'ready' &&
+                planState.plan.summary.copySeconds < 0.01 && (
+                  <p className="error export-note">
+                    За планом нічого не копіюється, серія з такими налаштуваннями покаже лише повне перекодування. Усуньте причину
+                    вище або увімкніть «Не звіряти колірний простір».
+                  </p>
+                )}
+            </>
+          )}
+          <p className="muted export-note">
+            Умови йдуть по черзі, порядок у кожному колі випадковий (за зерном). Для чесних цифр закрийте інші вкладки й
+            програми, не вимикайте ноутбук із мережі й не чіпайте сторінку під час серії.
+          </p>
+        </section>
+
+        {shownSeries && records.length > 0 && (
+          <section className="card">
+            <h2>Результати: {shownSeries.title}</h2>
+            <StandResults series={shownSeries} records={records} />
+            <div className="dialog-actions">
+              <button type="button" className="btn" onClick={saveCsv}>
+                Зберегти CSV
+              </button>
+              <button type="button" className="btn" onClick={saveJson}>
+                Зберегти JSON
+              </button>
+            </div>
+            <details className="stand-runs">
+              <summary>Усі прогони ({records.length})</summary>
+              <ul>
+                {records.map((record) => (
+                  <li key={record.index} className={record.ok ? undefined : 'error'}>
+                    {record.index + 1}. {record.label} · {record.warmup ? 'прогрів' : `коло ${record.round + 1}`} ·{' '}
+                    {record.ok && record.elapsedMs !== null ? `${(record.elapsedMs / 1000).toFixed(1).replace('.', ',')} с` : record.error}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          </section>
+        )}
+      </div>
     </div>
   )
 }
