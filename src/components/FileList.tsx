@@ -45,7 +45,7 @@ export default function FileList({
 }: FileListProps) {
   return (
     <section className="card">
-      <h2>Файли</h2>
+      <h2>Медіатека</h2>
       <ul className="files">
         {sources.map((source) => {
           const { info } = source

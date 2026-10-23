@@ -3,13 +3,13 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './styles.css'
 import App from './App.tsx'
-import StandApp from './stand/StandApp.tsx'
 
-// The measurement stand lives at the same address with ?stand.
+// The measurement stand is a page of the app; the old address with ?stand
+// still opens it.
 const stand = new URLSearchParams(window.location.search).has('stand')
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    {stand ? <StandApp /> : <App />}
+    <App initialPage={stand ? 'stand' : 'editor'} />
   </StrictMode>,
 )
