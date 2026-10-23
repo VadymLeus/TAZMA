@@ -1,6 +1,8 @@
 // src/resume/parts.ts
 import type { EncodedPacket } from 'mediabunny'
 import { FALLBACK_FRAME, MIN_FRAME } from '../export/frameTiming.ts'
+import { emptyStages, timedItems } from '../export/stageTimes.ts'
+import type { StageTimes } from '../export/stageTimes.ts'
 import { ExportAborted } from '../export/types.ts'
 import type { FrameItem, PacketItem, VideoItem } from '../export/videoItems.ts'
 import { configToStored } from './configs.ts'
@@ -26,9 +28,10 @@ export interface Encoding {
 
 export type Emit = (packet: EncodedPacket, meta: EncodedVideoChunkMetadata | undefined) => void
 
-// Whatever starts encoder sessions. Their packets go to `emit`, in order.
+// Whatever starts encoder sessions. Their packets go to `emit`, in order. The
+// engine may add the time of its painting and encoding to `stages`.
 export interface Engine {
-  open: (emit: Emit) => Promise<Encoding>
+  open: (emit: Emit, stages: StageTimes) => Promise<Encoding>
 }
 
 export interface PartsArgs {
@@ -67,10 +70,18 @@ export interface PartsResult {
   commits: number
   commitMs: number
   checkpointMs: number
+  // The time to open the parts that followed a closed one: their files and
+  // encoder sessions. Together with the closing it is what a checkpoint costs
+  // before the frames flow again.
+  openMs: number
+  // Where the time of the loop went.
+  stages: StageTimes
 }
 
 interface Part {
   writer: SegmentWriter
+  // Opened right after the part before it was closed.
+  afterCut: boolean
   encoding: Encoding | null
   copiedPackets: number
   copiedSeconds: number
@@ -98,7 +109,10 @@ export async function runParts(args: PartsArgs): Promise<PartsResult> {
     commits: 0,
     commitMs: 0,
     checkpointMs: 0,
+    openMs: 0,
+    stages: emptyStages(),
   }
+  const passBegan = performance.now()
   const framesBefore = manifest.segments.reduce((sum, record) => sum + record.packets, 0)
   const finish = (): PartsResult => ({ manifest, ...result })
   if (cutter.covered >= manifest.total - SAME) return finish()
@@ -126,10 +140,13 @@ export async function runParts(args: PartsArgs): Promise<PartsResult> {
     }
   }
 
-  async function begin(time: number): Promise<Part> {
+  async function begin(time: number, afterCut: boolean): Promise<Part> {
+    const began = performance.now()
     cutter.start(time)
     const writer = new SegmentWriter(await store.create(segmentFile(manifest.segments.length)))
-    part = { writer, encoding: null, copiedPackets: 0, copiedSeconds: 0 }
+    result.stages.createMs += performance.now() - began
+    part = { writer, afterCut, encoding: null, copiedPackets: 0, copiedSeconds: 0 }
+    if (afterCut) result.openMs += performance.now() - began
     return part
   }
 
@@ -194,11 +211,13 @@ export async function runParts(args: PartsArgs): Promise<PartsResult> {
   async function place(time: number): Promise<Part | null> {
     let action = cutter.classify(time)
     if (action === 'skip') return null
+    let afterCut = false
     if (action === 'cut') {
       await close(false)
       action = 'start'
+      afterCut = true
     }
-    return action === 'start' ? begin(time) : (part as Part)
+    return action === 'start' ? begin(time, afterCut) : (part as Part)
   }
 
   async function addFrame(item: FrameItem): Promise<void> {
@@ -210,10 +229,14 @@ export async function runParts(args: PartsArgs): Promise<PartsResult> {
     if (!target) return
     await target.writer.ready()
     if (!target.encoding) {
-      target.encoding = await engine.open(emitFor(target))
+      const opening = performance.now()
+      target.encoding = await engine.open(emitFor(target), result.stages)
+      result.stages.startRunMs += performance.now() - opening
       result.sessions++
+      if (target.afterCut) result.openMs += performance.now() - opening
     }
     await target.encoding.add(item, duration)
+    result.stages.firstFrameMs ??= performance.now() - passBegan
     result.frames++
     result.seconds += duration
     onProgress?.({ time: time + duration, frames: done() })
@@ -236,7 +259,7 @@ export async function runParts(args: PartsArgs): Promise<PartsResult> {
   }
 
   try {
-    for await (const item of args.items) {
+    for await (const item of timedItems(args.items, result.stages)) {
       try {
         if (signal?.aborted) throw new ExportAborted()
         check()

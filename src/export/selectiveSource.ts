@@ -10,6 +10,8 @@ import { analyzeProject, toBytes } from './selectiveAnalysis.ts'
 import { planSelective } from './selectivePlan.ts'
 import type { Piece } from './selectivePlan.ts'
 import type { OpenedProject } from './shared.ts'
+import { emptyReadTimes, pulled } from './stageTimes.ts'
+import type { ReadTimes } from './stageTimes.ts'
 import type { VideoSettings } from './types.ts'
 import type { FrameItem, VideoItem } from './videoItems.ts'
 
@@ -36,6 +38,9 @@ export interface SelectiveSource {
   videoConfig: VideoDecoderConfig
   // Counted as the items are read.
   counts: { fallbackGops: number; rewritten: number }
+  // The time the stream has spent so far reading, finding key packets and
+  // waiting for the decoder.
+  timing: ReadTimes
   // The video in the order of the output: decoded frames of the stretches that
   // are encoded again and the packets of those that are copied. Items that
   // end before `from` (timeline seconds) are not read; the ones around it
@@ -78,6 +83,8 @@ export async function prepareSelective(args: SelectiveArgs): Promise<SelectiveSo
     : analysis.encoder.config
 
   const counts = { fallbackGops: 0, rewritten: 0 }
+  const timing: ReadTimes = { ...emptyReadTimes(), ...analysis.timing }
+  let began: number | null = null
 
   // Moves a packet of the stream called key onto the numbers of the
   // output's parameter sets; null when that cannot be done.
@@ -118,7 +125,20 @@ export async function prepareSelective(args: SelectiveArgs): Promise<SelectiveSo
   ): AsyncGenerator<FrameItem> {
     const sink = new VideoSampleSink(track)
     const seek = resume > segment.offset ? Math.max(from, sourceTime(segment, resume) - SEEK_MARGIN) : from
-    for await (const sample of sink.samples(seek, to)) {
+    // The first frame of the export to come out of a decoder: when it was
+    // asked for and how long it took. A stretch with no frame in it (a sliver
+    // at the edge) does not count.
+    const asked = performance.now()
+    let lastWait = 0
+    const waited = (ms: number) => {
+      timing.decodeMs += ms
+      lastWait = ms
+    }
+    for await (const sample of pulled(sink.samples(seek, to), waited)) {
+      if (timing.decodeAskMs === null && began !== null) {
+        timing.decodeAskMs = asked - began
+        timing.firstSampleMs = lastWait
+      }
       if (!keepFirst && sample.timestamp < from - EPS) {
         sample.close()
         continue
@@ -137,8 +157,10 @@ export async function prepareSelective(args: SelectiveArgs): Promise<SelectiveSo
     resume: number,
   ): AsyncGenerator<VideoItem> {
     const sink = new EncodedPacketSink(track)
+    const seeking = performance.now()
     const start = await sink.getKeyPacket(piece.from + EPS)
     const end = piece.toEnd ? null : await sink.getKeyPacket(piece.to + EPS)
+    timing.seekMs += performance.now() - seeking
     const aligned =
       start !== null &&
       Math.abs(start.timestamp - piece.from) <= EPS &&
@@ -152,7 +174,9 @@ export async function prepareSelective(args: SelectiveArgs): Promise<SelectiveSo
     // front of it.
     let begin = start
     if (resume > segment.offset) {
+      const looking = performance.now()
       const key = await sink.getKeyPacket(sourceTime(segment, resume) + EPS)
+      timing.seekMs += performance.now() - looking
       if (key && key.timestamp > start.timestamp) begin = key
     }
 
@@ -196,7 +220,7 @@ export async function prepareSelective(args: SelectiveArgs): Promise<SelectiveSo
 
     let gop: EncodedPacket[] = []
     let gopStart = begin.timestamp
-    for await (const packet of sink.packets(begin, end ?? undefined)) {
+    for await (const packet of pulled(sink.packets(begin, end ?? undefined), (ms) => (timing.readMs += ms))) {
       if (packet.type === 'key' && gop.length > 0) {
         yield* sendGop(gop, gopStart, packet.timestamp)
         gop = []
@@ -210,6 +234,7 @@ export async function prepareSelective(args: SelectiveArgs): Promise<SelectiveSo
   }
 
   async function* items(from = 0): AsyncGenerator<VideoItem> {
+    began ??= performance.now()
     for (const piece of pieces) {
       const segment = segments[piece.segment]
       const track = opened.tracksOf(segment).video
@@ -226,5 +251,5 @@ export async function prepareSelective(args: SelectiveArgs): Promise<SelectiveSo
     }
   }
 
-  return { videoConfig, counts, items, fromEncoder, sessionProblem }
+  return { videoConfig, counts, timing, items, fromEncoder, sessionProblem }
 }

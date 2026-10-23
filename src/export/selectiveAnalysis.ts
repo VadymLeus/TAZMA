@@ -112,6 +112,8 @@ export interface ProjectAnalysis {
   streams: Map<string, SourceStream | null>
   target: TargetStream
   encoder: EncoderProbe
+  // Milliseconds spent starting the probe encoder and going through the files.
+  timing: { probeMs: number; scanMs: number }
 }
 
 export async function analyzeProject(
@@ -121,7 +123,9 @@ export async function analyzeProject(
   size: FrameSize,
   signal?: AbortSignal,
 ): Promise<ProjectAnalysis> {
+  const probing = performance.now()
   const encoder = await probeEncoder(settings, size)
+  const probeMs = performance.now() - probing
   const target: TargetStream = {
     codec: settings.videoCodec,
     codecString: encoder.config.codec,
@@ -134,6 +138,7 @@ export async function analyzeProject(
   const blockers = new Map<string, CopyBlocker[]>()
   const streams = new Map<string, SourceStream | null>()
   const analyses: SegmentAnalysis[] = []
+  const scanning = performance.now()
   for (const segment of segments) {
     if (signal?.aborted) throw new ExportAborted()
     const sourceId = segment.clip.sourceId
@@ -156,7 +161,7 @@ export async function analyzeProject(
       copyable: true,
     })
   }
-  return { analyses, verdicts, blockers, streams, target, encoder }
+  return { analyses, verdicts, blockers, streams, target, encoder, timing: { probeMs, scanMs: performance.now() - scanning } }
 }
 
 export interface ProjectPlan {

@@ -64,9 +64,10 @@ export function journalRows(
   }
   if (report.commits > 0) {
     const mean = (ms: number) => `${Math.round(ms / report.commits)} мс`
+    const opened = report.openMs ?? 0
     rows.push([
       'Контрольні точки',
-      `${report.commits} ${partsWord(report.commits)} закрито; у середньому ${mean(report.checkpointMs)} на точку, з них запис і підтвердження ${mean(report.commitMs)}`,
+      `${report.commits} ${partsWord(report.commits)} закрито; у середньому ${mean(report.checkpointMs + opened)} на точку, з них запис і підтвердження ${mean(report.commitMs)}${opened > 0 ? `, відкриття наступної частини ${mean(opened)}` : ''}`,
     ])
   }
   const stages = [`відео ${seconds(report.videoMs)}`, `збирання ${seconds(report.assembleMs)}`]

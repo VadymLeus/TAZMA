@@ -3,6 +3,7 @@ import { CanvasSource, NullTarget, Output, Quality, VideoSampleSink } from 'medi
 import { composeFrame } from '../export/compose.ts'
 import { createFormat } from '../export/codecs.ts'
 import type { Segment } from '../export/plan.ts'
+import type { StageTimes } from '../export/stageTimes.ts'
 import type { SelectiveSource } from '../export/selectiveSource.ts'
 import type { OpenedProject } from '../export/shared.ts'
 import type { ExportProject, VideoSettings } from '../export/types.ts'
@@ -53,7 +54,7 @@ function createEngine(args: VideoPassArgs): Engine {
   let ctx: OffscreenCanvasRenderingContext2D | null = null
 
   return {
-    async open(emit) {
+    async open(emit, stages: StageTimes) {
       if (!canvas || !ctx) {
         canvas = new OffscreenCanvas(size.width, size.height)
         ctx = canvas.getContext('2d')
@@ -73,8 +74,14 @@ function createEngine(args: VideoPassArgs): Engine {
       await output.start()
       return {
         async add(item, duration) {
+          const painting = performance.now()
           composeFrame(painter, size.width, size.height, item.sample, item.segment.clip.effect, project.texts, item.time)
+          const encoding = performance.now()
           await source.add(item.time, duration)
+          const added = performance.now() - encoding
+          stages.composeMs += encoding - painting
+          stages.encodeMs += added
+          stages.firstAddMs ??= added
           flow?.handOff()
         },
         async end() {
@@ -119,7 +126,7 @@ export async function encodeVideo(args: VideoPassArgs): Promise<VideoPassResult>
     if (manifest.videoConfig && !sameStream(manifest.videoConfig, selective.videoConfig)) {
       throw new Error(STREAM_CHANGED)
     }
-    return runParts({
+    const result = await runParts({
       store,
       manifest,
       items: selective.items(from),
@@ -137,6 +144,8 @@ export async function encodeVideo(args: VideoPassArgs): Promise<VideoPassResult>
       signal,
       onProgress,
     })
+    Object.assign(result.stages, selective.timing)
+    return result
   }
 
   return runParts({

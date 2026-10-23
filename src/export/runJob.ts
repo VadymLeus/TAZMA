@@ -11,7 +11,7 @@ export interface JobDeps {
   createWorker?: WorkerFactory
 }
 
-function defaultWorker(): WorkerLike {
+export function defaultWorker(): WorkerLike {
   return new Worker(new URL('./worker/exportWorker.ts', import.meta.url), {
     type: 'module',
   }) as unknown as WorkerLike

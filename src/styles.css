@@ -614,6 +614,7 @@ body {
 }
 
 .field input[type='number'],
+.field input[type='text'],
 .field select,
 .field textarea {
   width: 100%;
@@ -920,4 +921,82 @@ textarea:focus-visible {
   stroke: var(--muted);
   stroke-width: 1.5;
   stroke-dasharray: 5 4;
+}
+
+/* Measurement stand */
+
+.stand {
+  display: grid;
+  gap: 16px;
+  align-content: start;
+}
+
+.stand .app-header {
+  margin-bottom: 0;
+}
+
+.stand .btn,
+.header-actions .btn {
+  text-decoration: none;
+}
+
+.stand-series {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 20px;
+}
+
+.stand-actions {
+  align-items: center;
+}
+
+.stand-actions .muted {
+  margin-right: auto;
+  font-size: 13px;
+}
+
+.stand-scroll {
+  overflow-x: auto;
+}
+
+.stand-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.stand-table th,
+.stand-table td {
+  padding: 6px 10px;
+  text-align: right;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--line);
+}
+
+.stand-table th:first-child,
+.stand-table td:first-child {
+  text-align: left;
+}
+
+.stand-table th {
+  font-weight: 600;
+  color: var(--muted);
+  white-space: normal;
+}
+
+.stand-pairs {
+  margin: 12px 0 0;
+  font-size: 14px;
+}
+
+.stand-runs {
+  margin-top: 14px;
+  font-size: 13px;
+}
+
+.stand-runs ul {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  font-variant-numeric: tabular-nums;
 }

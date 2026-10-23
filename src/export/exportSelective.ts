@@ -20,6 +20,7 @@ import { buildSegments } from './plan.ts'
 import { prepareSelective } from './selectiveSource.ts'
 import { FALLBACK_FRAME, MIN_FRAME, audioItems, openProject } from './shared.ts'
 import type { AudioItem } from './shared.ts'
+import { emptyStages, pulled, timedItems } from './stageTimes.ts'
 import { ExportAborted } from './types.ts'
 import type { ExportOptions, ExportProject, ExportResult, VideoSettings } from './types.ts'
 import type { VideoItem } from './videoItems.ts'
@@ -145,23 +146,38 @@ export async function exportSelective(
     }
 
     let frames = 0
-    const merged = mergeByTime<Item>([selective.items(), audioItems(segments, opened)], dispose)
-    for await (const item of merged) {
+    const stages = emptyStages()
+    const loopBegan = performance.now()
+    stages.setupMs = loopBegan - startedAt
+    const merged = mergeByTime<Item>(
+      [
+        pulled(selective.items(), (ms) => (stages.videoPullMs += ms)),
+        pulled(audioItems(segments, opened), (ms) => (stages.audioPullMs += ms)),
+      ],
+      dispose,
+    )
+    for await (const item of timedItems(merged, stages)) {
       check()
       if (signal?.aborted) {
         dispose(item)
         throw new ExportAborted()
       }
       if (item.kind === 'audio') {
+        const adding = performance.now()
         try {
           await audioSource?.add(item.sample)
         } finally {
+          stages.audioAddMs += performance.now() - adding
           item.sample.close()
         }
       } else if (item.kind === 'packet') {
+        const ending = performance.now()
         await endRun()
+        const sending = performance.now()
+        stages.endRunMs += sending - ending
         const { packet, time } = item
         await sendPacket(packet)
+        stages.sendMs += performance.now() - sending
         frames++
         stats.framesCopied++
         stats.copiedSeconds += packet.duration
@@ -173,9 +189,20 @@ export async function exportSelective(
           const natural = sample.duration > 0 ? sample.duration : FALLBACK_FRAME
           const duration = Math.min(natural, segment.offset + segment.length - time)
           if (duration < MIN_FRAME) continue
-          run ??= await startRun()
+          if (!run) {
+            const starting = performance.now()
+            run = await startRun()
+            stages.startRunMs += performance.now() - starting
+          }
+          const painting = performance.now()
           composeFrame(ctx, size.width, size.height, sample, segment.clip.effect, texts, time)
+          const encoding = performance.now()
           await run.source.add(time, duration)
+          const added = performance.now() - encoding
+          stages.composeMs += encoding - painting
+          stages.encodeMs += added
+          stages.firstAddMs ??= added
+          stages.firstFrameMs ??= performance.now() - loopBegan
           handedOn = true
           frames++
           stats.framesRecoded++
@@ -188,6 +215,7 @@ export async function exportSelective(
       }
     }
 
+    const loopEnded = performance.now()
     await endRun()
     await queue
     check()
@@ -199,6 +227,8 @@ export async function exportSelective(
 
     const mimeType = await output.getMimeType()
     const blob = await sink.finish(mimeType)
+    stages.finishMs = performance.now() - loopEnded
+    Object.assign(stages, selective.timing)
     const finished = sink
     return {
       blob,
@@ -214,6 +244,7 @@ export async function exportSelective(
       file: finished.name,
       settings,
       stats,
+      stages,
       release: () => finished.discard(),
     }
   } catch (error) {

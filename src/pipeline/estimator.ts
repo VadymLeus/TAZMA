@@ -99,6 +99,13 @@ export class FlowEstimator {
   private stage: FlowPhase = 'calibrate'
   private entered: number[] = []
   private done = 0
+  // Completions, counted from `calibFrom`, that the calibration leaves out.
+  private calibFrom = 0
+  private calibSkip: number
+  // W0 measured a second time on a warm pipeline (see recheck below).
+  private rechecked = false
+  private rechecking = false
+  private firstW0: number | null = null
   private samples: number[] = []
   private stamps: number[] = []
   private windowStart: number | null = null
@@ -107,6 +114,8 @@ export class FlowEstimator {
   private sinceProbe = 0
   private w0: number | null = null
   private lambda: number | null = null
+  // The rate the last probe measured, which the ratchet in watchRate leaves alone.
+  private probed: number | null = null
   private skip: number
   private probedAt = 0
   private climb: ClimbStage = 'rest'
@@ -131,7 +140,8 @@ export class FlowEstimator {
 
   constructor(options: EstimatorOptions) {
     this.o = { ...DEFAULTS, ...options }
-    this.skip = Math.max(1, Math.min(this.o.memoryLimit, this.o.probeLimit)) + PROBE_EXTRA
+    this.skip = this.probeDepth + PROBE_EXTRA
+    this.calibSkip = this.o.warmup
   }
 
   get phase(): FlowPhase {
@@ -146,6 +156,16 @@ export class FlowEstimator {
   // λ in frames per second, once measured.
   get rate(): number | null {
     return this.lambda
+  }
+
+  // The rate the last probe measured at its depth, once there is one.
+  get probeRate(): number | null {
+    return this.probed
+  }
+
+  // W0 of the first calibration, in seconds, if a second one replaced it.
+  get firstLatency(): number | null {
+    return this.firstW0
   }
 
   // N_perf by the formula, once both W0 and λ are known.
@@ -180,9 +200,14 @@ export class FlowEstimator {
 
   private limitWith(trial: number | null): number {
     if (this.stage === 'calibrate') return 1
-    if (this.stage === 'probe') return Math.max(1, Math.min(this.o.memoryLimit, this.o.probeLimit))
+    if (this.stage === 'probe') return this.probeDepth
     const byThroughput = trial ?? this.performanceLimit ?? this.o.probeLimit
     return Math.max(this.o.minLimit, combineLimits(this.o.memoryLimit, byThroughput))
+  }
+
+  // The limit the probe runs at.
+  private get probeDepth(): number {
+    return Math.max(1, Math.min(this.o.memoryLimit, this.o.probeLimit))
   }
 
   admitted(now: number): void {
@@ -199,12 +224,9 @@ export class FlowEstimator {
     const since = this.entered.shift()
     this.done++
     if (this.stage === 'calibrate') {
-      if (since === undefined || this.done <= this.o.warmup) return
+      if (since === undefined || this.done - this.calibFrom <= this.calibSkip) return
       this.samples.push(now - since)
-      if (this.samples.length >= this.o.calibration) {
-        this.w0 = Math.max(1e-6, median(this.samples))
-        this.startProbe()
-      }
+      if (this.samples.length >= this.o.calibration) this.endCalibration()
     } else if (this.stage === 'probe') {
       this.stamps.push(now)
       if (this.stamps.length >= this.skip + this.o.probe) this.finishProbe()
@@ -220,6 +242,45 @@ export class FlowEstimator {
     }
   }
 
+  private endCalibration(): void {
+    const w0 = Math.max(1e-6, median(this.samples))
+    if (!this.rechecking) {
+      this.w0 = w0
+      this.startProbe()
+      return
+    }
+    // The second measurement only ever lowers W0: whatever the first one had
+    // on top of the true time was the cold start, which can't be negative.
+    this.rechecking = false
+    this.firstW0 = this.w0
+    this.w0 = Math.min(this.w0 as number, w0)
+    this.stage = 'steady'
+  }
+
+  // The first calibration runs while the codecs and the machine are still
+  // starting up, and its W0 can come out several times too high (116 ms and
+  // 137 ms against about 36 ms in two runs of three). Where that matters, the
+  // formula asks for as many frames as the probe used or more, so the limit
+  // sits at the top and the pipeline holds the most frames it can. Then W0 is
+  // measured again, once the pipeline is warm. With less memory than the
+  // probe's depth the budget decides the limit and a second look can't change
+  // much, so it is not made.
+  private needsRecheck(): boolean {
+    const formula = this.formulaLimit
+    return !this.rechecked && formula !== null && formula >= this.o.probeLimit && this.o.memoryLimit >= this.o.probeLimit
+  }
+
+  private startRecheck(): void {
+    this.rechecked = true
+    this.rechecking = true
+    this.stage = 'calibrate'
+    this.samples = []
+    // The frames already inside were let in under the deep limit and are not
+    // an empty pipeline; the calibration starts with the first one let in after.
+    this.calibFrom = this.done
+    this.calibSkip = this.entered.length + this.o.warmup
+  }
+
   private startProbe(): void {
     this.stage = 'probe'
     this.stamps = []
@@ -230,7 +291,10 @@ export class FlowEstimator {
     const first = this.stamps[this.skip] as number
     const last = this.stamps[this.stamps.length - 1] as number
     const frames = this.stamps.length - 1 - this.skip
-    if (last > first && frames > 0) this.lambda = frames / (last - first)
+    if (last > first && frames > 0) {
+      this.lambda = frames / (last - first)
+      this.probed = this.lambda
+    }
     this.stamps = []
     this.sinceProbe = 0
     this.probedAt = last
@@ -239,6 +303,7 @@ export class FlowEstimator {
     this.lastWindow = 0
     this.stage = 'steady'
     this.lambda ??= 1 / (this.w0 ?? 1)
+    if (this.needsRecheck()) this.startRecheck()
   }
 
   private beginWindow(now: number, stage: ClimbStage): void {
@@ -289,11 +354,19 @@ export class FlowEstimator {
   }
 
   // Tries a much higher limit, if the limit was in the way: if the frames in
-  // flight never came up to it, a higher one changes nothing.
+  // flight never came up to it, a higher one changes nothing. A limit the
+  // probe has measured is not tried again while the rate holds.
   private tryHigher(): void {
     const cap = Math.min(this.o.memoryLimit, MAX_LIMIT)
     const target = Math.min(cap, Math.max(this.baseLimit * 2, CLIMB_CEIL))
     if (this.winPeak < this.baseLimit || target <= this.baseLimit) {
+      this.wait(false)
+      return
+    }
+    // The probe has been at this depth already. If the limit in force keeps
+    // nearly all of the rate it saw there, a try would repeat it and only cost
+    // the memory of the deeper queue.
+    if (this.probed !== null && target <= this.probeDepth && this.baseRate >= this.probed * (1 - CLIMB_GAIN)) {
       this.wait(false)
       return
     }

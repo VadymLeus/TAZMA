@@ -18,6 +18,7 @@ import { mergeByTime } from './merge.ts'
 import { buildSegments } from './plan.ts'
 import type { Segment } from './plan.ts'
 import { FALLBACK_FRAME, MIN_FRAME, audioItems, openProject } from './shared.ts'
+import { emptyStages, pulled, timedItems } from './stageTimes.ts'
 import type { AudioItem } from './shared.ts'
 import { ExportAborted } from './types.ts'
 import type { ExportOptions, ExportProject, ExportResult, VideoSettings } from './types.ts'
@@ -85,8 +86,17 @@ export async function exportProject(
 
     let frames = 0
     let encodedSeconds = 0
-    const merged = mergeByTime<Item>([videoItems(), audioItems(segments, opened)], closeItem)
-    for await (const item of merged) {
+    const stages = emptyStages()
+    const loopBegan = performance.now()
+    stages.setupMs = loopBegan - startedAt
+    const merged = mergeByTime<Item>(
+      [
+        pulled(videoItems(), (ms) => (stages.videoPullMs += ms)),
+        pulled(audioItems(segments, opened), (ms) => (stages.audioPullMs += ms)),
+      ],
+      closeItem,
+    )
+    for await (const item of timedItems(merged, stages)) {
       if (signal?.aborted) {
         item.sample.close()
         throw new ExportAborted()
@@ -100,14 +110,23 @@ export async function exportProject(
           const natural = sample.duration > 0 ? sample.duration : FALLBACK_FRAME
           const duration = Math.min(natural, segment.offset + segment.length - time)
           if (duration < MIN_FRAME) continue
+          const painting = performance.now()
           composeFrame(ctx, size.width, size.height, sample, segment.clip.effect, texts, time)
+          const encoding = performance.now()
           await videoSource.add(time, duration)
+          const added = performance.now() - encoding
+          stages.composeMs += encoding - painting
+          stages.encodeMs += added
+          stages.firstAddMs ??= added
+          stages.firstFrameMs ??= performance.now() - loopBegan
           handedOn = true
           frames++
           encodedSeconds += duration
           onProgress?.({ time: time + duration, total, frames })
         } else if (audioSource) {
+          const adding = performance.now()
           await audioSource.add(item.sample)
+          stages.audioAddMs += performance.now() - adding
         }
       } finally {
         if (handedOn) flow?.handOff()
@@ -115,6 +134,7 @@ export async function exportProject(
       }
     }
 
+    const loopEnded = performance.now()
     videoSource.close()
     audioSource?.close()
     await output.finalize()
@@ -122,6 +142,7 @@ export async function exportProject(
 
     const mimeType = await output.getMimeType()
     const blob = await sink.finish(mimeType)
+    stages.finishMs = performance.now() - loopEnded
     const finished = sink
     return {
       blob,
@@ -146,6 +167,7 @@ export async function exportProject(
         fallbackGops: 0,
         rewrittenPackets: 0,
       },
+      stages,
       release: () => finished.discard(),
     }
   } catch (error) {

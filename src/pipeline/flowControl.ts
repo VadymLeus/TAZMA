@@ -4,7 +4,7 @@ import { FlowEstimator } from './estimator.ts'
 import type { FlowPhase } from './estimator.ts'
 import { installGate } from './gate.ts'
 import type { GateHost } from './gate.ts'
-import { MAX_LIMIT, frameBytes, memoryLimit } from './limit.ts'
+import { MAX_LIMIT, fixedBytes, frameBytes, memoryLimit } from './limit.ts'
 
 export type FlowMode = 'auto' | 'fixed'
 
@@ -34,9 +34,15 @@ export interface FlowReport {
   // λ in frames per second and W0 in milliseconds, as measured.
   rate: number | null
   latencyMs: number | null
+  // The rate the last probe measured, before the later windows could raise λ.
+  probeRate: number | null
+  // W0 of the first calibration in milliseconds, when a second one replaced it.
+  firstLatencyMs: number | null
   margin: number
   budgetBytes: number
   frameBytes: number
+  // The part of the budget taken by the encoder's own pictures.
+  fixedBytes: number
   // Most frames in the pipeline at once, and how far the limit was exceeded.
   peak: number
   floor: number
@@ -71,9 +77,14 @@ export interface Held {
 const TICK_MS = 25
 const MIN_STALL_MS = 100
 const MAX_STALL_MS = 2000
-const FIRST_STALL_MS = 250
+const FIRST_STALL_MS = 100
 // A pipeline that needs this many borrowed credits is not helped by a limit.
 const MAX_BORROWED = 24
+// Credits lent at the first stall; each stall that follows without progress
+// lends twice as many, up to the cap, so a decoder that keeps back many frames
+// is found in a few steps and not one packet at a time.
+const FIRST_BURST = 1
+const MAX_BURST = 8
 const MARGIN = 0.25
 
 // Keeps the number of frames in the pipeline under a limit. A frame takes a
@@ -95,7 +106,11 @@ export class FlowControl {
   private encoding = 0
   private early = 0
   private transfers = 0
-  private lastProgress: number
+  // When something last moved; null while the pipeline is empty, because the
+  // time it stood empty is not a stall and says nothing about its pace.
+  private lastProgress: number | null = null
+  private events = 0
+  private burst = FIRST_BURST
   private gap = FIRST_STALL_MS / 8
   private stopTimer: (() => void) | null = null
   private restore: (() => void) | null = null
@@ -108,7 +123,6 @@ export class FlowControl {
     this.byMemory = memoryLimit(config.budgetBytes, config.frameWidth, config.frameHeight)
     this.estimator =
       config.mode === 'auto' ? new FlowEstimator({ memoryLimit: this.byMemory, margin: MARGIN }) : null
-    this.lastProgress = clock.now()
     this.pool = new CreditPool(this.target())
   }
 
@@ -149,6 +163,7 @@ export class FlowControl {
   hold(gate: Held): void {
     if (!this.held.includes(gate)) this.held.push(gate)
     if (this.blockedSince === null) this.blockedSince = this.clock.now()
+    if (this.lastProgress === null) this.lastProgress = this.clock.now()
     if (!this.stopTimer) {
       this.stopTimer = this.clock.every(() => this.watch(), TICK_MS)
     }
@@ -172,9 +187,13 @@ export class FlowControl {
   // Something moved: a frame came out of a decoder or went into the encoder.
   progress(): void {
     const now = this.clock.now()
-    const gap = Math.min(now - this.lastProgress, MAX_STALL_MS)
-    if (gap > 0) this.gap = this.gap * 0.8 + gap * 0.2
-    this.lastProgress = now
+    this.events++
+    this.burst = FIRST_BURST
+    if (this.lastProgress !== null) {
+      const gap = Math.min(now - this.lastProgress, MAX_STALL_MS)
+      if (gap > 0) this.gap = this.gap * 0.8 + gap * 0.2
+    }
+    this.lastProgress = this.pool.inFlight > 0 || this.held.length > 0 ? now : null
   }
 
   // A decoded frame was closed. The consumer calls handOff() just before it
@@ -242,24 +261,37 @@ export class FlowControl {
     }
   }
 
-  // Lends a credit when the pipeline has stood still: a decoder keeps frames
+  // Lends credits when the pipeline has stood still: a decoder keeps frames
   // back until it has seen more packets, an encoder until it has seen more
-  // frames, and all credits are inside them. The lender learns from it: the
-  // limit never goes below the depth that was needed.
+  // frames, and all credits are inside them. Each stall that follows without
+  // progress lends twice as many as the one before. The lender learns from it:
+  // the limit never goes below the depth that was needed.
   private watch(): void {
     if (this.held.length === 0) return
-    const idle = this.clock.now() - this.lastProgress
+    const now = this.clock.now()
+    if (this.lastProgress === null) {
+      this.lastProgress = now
+      return
+    }
     const wait = Math.min(MAX_STALL_MS, Math.max(MIN_STALL_MS, this.gap * 8))
-    if (idle < wait) return
+    if (now - this.lastProgress < wait) return
     const gate = this.held[0] as Held
-    if (!gate.lend()) {
+    const before = this.events
+    const count = this.burst
+    let lent = 0
+    while (lent < count && this.pool.stats().borrowed < MAX_BORROWED) {
+      if (!gate.lend()) break
+      this.pool.borrow()
+      this.estimator?.admitted(this.clock.now() / 1000)
+      lent++
+    }
+    if (lent === 0) {
       this.unhold(gate)
       return
     }
-    this.pool.borrow()
-    this.estimator?.admitted(this.clock.now() / 1000)
     this.floor = Math.max(this.floor, this.pool.inFlight)
     this.lastProgress = this.clock.now()
+    if (this.events === before) this.burst = Math.min(count * 2, MAX_BURST)
     if (this.pool.stats().borrowed >= MAX_BORROWED) this.letGo = true
     this.apply()
   }
@@ -292,9 +324,12 @@ export class FlowControl {
       trials: estimator?.feedback.trials ?? [],
       rate: estimator?.rate ?? null,
       latencyMs: estimator?.latency != null ? estimator.latency * 1000 : null,
+      probeRate: estimator?.probeRate ?? null,
+      firstLatencyMs: estimator?.firstLatency != null ? estimator.firstLatency * 1000 : null,
       margin: MARGIN,
       budgetBytes: this.config.budgetBytes,
       frameBytes: this.size,
+      fixedBytes: fixedBytes(this.config.frameWidth, this.config.frameHeight),
       peak: stats.peak,
       floor: this.floor,
       borrowed: stats.borrowed,

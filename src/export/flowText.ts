@@ -1,5 +1,5 @@
 // src/export/flowText.ts
-import { framesText } from '../media/format.ts'
+import { formatBytes, framesText } from '../media/format.ts'
 import type { FlowReport } from '../pipeline/flowControl.ts'
 import { attemptLabel } from './attempts.ts'
 import type { ExportAttempt, FailedAttempt } from './attempts.ts'
@@ -30,10 +30,18 @@ export function flowRows(
     const parts = [`за пам’яттю ${report.byMemory}`]
     if (report.byThroughput !== null) parts.push(`за швидкістю ${report.byThroughput}`)
     rows.push(['Конвеєр', `Авто: N = ${report.limit} (${parts.join(', ')})`])
+    if (report.budgetBytes < report.fixedBytes + report.frameBytes) {
+      rows.push([
+        'Бюджет',
+        `${formatBytes(report.budgetBytes)} замало: два кадри кодувальника займають ${formatBytes(report.fixedBytes)}, ще кадр – ${formatBytes(report.frameBytes)}`,
+      ])
+    }
     if (report.rate !== null && report.latencyMs !== null) {
+      const w0 = (ms: number) => decimal(ms, ms < 10 ? 1 : 0)
+      const first = report.firstLatencyMs !== null ? ` (перший замір ${w0(report.firstLatencyMs)} мс, виміряно вдруге на прогрітому конвеєрі)` : ''
       rows.push([
         'Виміряно',
-        `λ ≈ ${Math.round(report.rate)} кадр/с, W₀ ≈ ${decimal(report.latencyMs, report.latencyMs < 10 ? 1 : 0)} мс, запас δ = ${Math.round(report.margin * 100)} %`,
+        `λ ≈ ${Math.round(report.rate)} кадр/с, W₀ ≈ ${w0(report.latencyMs)} мс${first}, запас δ = ${Math.round(report.margin * 100)} %`,
       ])
     } else {
       rows.push(['Виміряно', 'експорт був надто коротким для виміру'])

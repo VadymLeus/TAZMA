@@ -2,7 +2,7 @@
 import type { ExportMode, JournalReport } from '../export/types.ts'
 
 // What an export through the journal showed about its checkpoints: the cost of
-// one (seconds) and the speed (seconds of timeline per second of video work).
+// one (seconds; closing a part and opening the next) and the speed (seconds of timeline per second of video work).
 export interface Measurement {
   cost: number
   speed: number
@@ -23,7 +23,7 @@ const isPositive = (value: unknown): value is number =>
 export function measurementOf(report: JournalReport, duration: number): Measurement | null {
   const covered = duration - report.resumedFrom
   if (report.commits <= 0 || !(report.videoMs > 0) || !(covered > 0)) return null
-  const cost = report.checkpointMs / report.commits / 1000
+  const cost = (report.checkpointMs + (report.openMs ?? 0)) / report.commits / 1000
   const speed = covered / (report.videoMs / 1000)
   return isPositive(cost) && isPositive(speed) ? { cost, speed } : null
 }

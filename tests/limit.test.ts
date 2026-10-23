@@ -4,6 +4,7 @@ import { describe, it } from 'node:test'
 import {
   MAX_LIMIT,
   combineLimits,
+  fixedBytes,
   frameBytes,
   memoryLimit,
   throughputLimit,
@@ -18,14 +19,39 @@ describe('frameBytes', () => {
   })
 })
 
+describe('fixedBytes', () => {
+  it('is two pictures of four bytes a pixel', () => {
+    assert.equal(fixedBytes(1280, 720), 7_372_800)
+    assert.equal(fixedBytes(3840, 2160), 66_355_200)
+  })
+
+  it('reproduces the peak measured on 4K: two encoder pictures and decoder frames', () => {
+    const peakMiB = (frames: number) => ((frames - 2) * frameBytes(3840, 2160) + fixedBytes(3840, 2160)) / MIB
+    assert.ok(Math.abs(peakMiB(4) - 87.01171875) < 1e-9)
+    assert.ok(Math.abs(peakMiB(10) - 158.203125) < 1e-9)
+  })
+})
+
 describe('memoryLimit', () => {
-  it('counts the frames that fit the budget', () => {
-    assert.equal(memoryLimit(256 * MIB, 1280, 720), 194)
-    assert.equal(memoryLimit(256 * MIB, 3840, 2160), 21)
+  it('counts the frames that fit the budget after the encoder pictures', () => {
+    assert.equal(memoryLimit(256 * MIB, 1280, 720), 188)
+    assert.equal(memoryLimit(256 * MIB, 3840, 2160), 16)
+    assert.equal(memoryLimit(128 * MIB, 3840, 2160), 5)
+  })
+
+  it('counts exactly at the edge of a whole number of frames', () => {
+    const budget = fixedBytes(3840, 2160) + 5 * frameBytes(3840, 2160)
+    assert.equal(memoryLimit(budget, 3840, 2160), 5)
+    assert.equal(memoryLimit(budget - 1, 3840, 2160), 4)
   })
 
   it('keeps one frame even when the budget is too small for it', () => {
     assert.equal(memoryLimit(MIB, 3840, 2160), 1)
+  })
+
+  it('keeps one frame when the budget does not cover the encoder pictures', () => {
+    assert.equal(memoryLimit(64 * MIB, 3840, 2160), 1)
+    assert.equal(memoryLimit(fixedBytes(3840, 2160), 3840, 2160), 1)
   })
 
   it('falls back to one frame for nonsense input', () => {

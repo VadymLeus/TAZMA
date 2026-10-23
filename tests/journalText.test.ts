@@ -47,6 +47,11 @@ describe('journalRows', () => {
     assert.match(row[1], /4 частини закрито; у середньому 100 мс на точку, з них запис і підтвердження 20 мс/)
   })
 
+  it('counts the opening of the next part in the mean cost and names it', () => {
+    const row = journalRows(report({ openMs: 200 })).find(([label]) => label === 'Контрольні точки')
+    assert.match(row?.[1] ?? '', /у середньому 150 мс на точку, з них запис і підтвердження 20 мс, відкриття наступної частини 50 мс/)
+  })
+
   it('names the stages and leaves out the sound when it was not done in this run', () => {
     const withSound = journalRows(report()).find(([label]) => label === 'Етапи')
     assert.match(withSound?.[1] ?? '', /^звук 1,5 с, відео 52 с, збирання 0,9 с$/)

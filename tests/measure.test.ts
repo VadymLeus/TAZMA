@@ -33,6 +33,12 @@ describe('measurementOf', () => {
     assert.equal(found.speed, 4)
   })
 
+  it('adds the time to open the next part to the cost of a checkpoint', () => {
+    const found = measurementOf(report({ openMs: 120 }), 120)
+    assert.ok(found)
+    assert.ok(Math.abs(found.cost - 0.09) < 1e-12)
+  })
+
   it('counts only the timeline this run covered', () => {
     const found = measurementOf(report({ resumedFrom: 60 }), 120)
     assert.equal(found?.speed, 2)

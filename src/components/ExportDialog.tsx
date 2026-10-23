@@ -11,9 +11,7 @@ import type {
 } from '../export/types.ts'
 import { heightChoices, outputSize } from '../export/geometry.ts'
 import { tickCount } from '../export/gifTicks.ts'
-import { blockerLines, planSentence } from '../export/planText.ts'
 import { planProject } from '../export/selectiveAnalysis.ts'
-import type { ProjectPlan } from '../export/selectiveAnalysis.ts'
 import {
   GIF_COMFORT_HEIGHT,
   GIF_FPS_CHOICES,
@@ -44,6 +42,8 @@ import type { FrameSize } from '../project/frame.ts'
 import { ResultInfo, progressText } from './ExportResult.tsx'
 import FlowControls from './FlowControls.tsx'
 import MemoryReport from './MemoryReport.tsx'
+import PlanNote from './PlanNote.tsx'
+import type { PlanState } from './PlanNote.tsx'
 
 interface ExportDialogProps {
   open: boolean
@@ -63,12 +63,6 @@ const MODE_LABELS: Record<ExportMode, string> = {
   selective: 'Вибірковий: копіювати незмінене',
   full: 'Повне перекодування',
 }
-
-type PlanState =
-  | { phase: 'idle' }
-  | { phase: 'loading' }
-  | { phase: 'ready'; plan: ProjectPlan }
-  | { phase: 'error'; message: string }
 
 const sizeLabel = (size: FrameSize) => `${size.width}×${size.height}`
 
@@ -328,7 +322,7 @@ export default function ExportDialog({
                   )}
                   {effective.mode === 'selective' && (
                     <>
-                      <PlanNote state={planState} project={project} />
+                      <PlanNote state={planState} sources={project.sources} />
                       <label className="check">
                         <input
                           type="checkbox"
@@ -525,45 +519,6 @@ export default function ExportDialog({
         </>
       )}
     </dialog>
-  )
-}
-
-function PlanNote({ state, project }: { state: PlanState; project: ExportProject }) {
-  if (state.phase === 'idle') return null
-  if (state.phase === 'loading') {
-    return <p className="muted export-plan">Аналізую ключові кадри файлів…</p>
-  }
-  if (state.phase === 'error') {
-    return <p className="error export-plan">Не вдалося скласти план: {state.message}</p>
-  }
-  const nameOf = (sourceId: string) =>
-    project.sources.find((source) => source.id === sourceId)?.info.fileName ?? sourceId
-  const lines = blockerLines(
-    state.plan.blockers,
-    nameOf,
-    (sourceId) => state.plan.streams.get(sourceId) ?? null,
-    state.plan.target,
-  )
-  return (
-    <div className="export-plan" role="status">
-      <p>{planSentence(state.plan.summary)}</p>
-      {lines.length > 0 && (
-        <ul className="export-blockers">
-          {lines.map((line) => (
-            <li key={line.headline}>
-              {line.headline}
-              {line.details.length > 0 && (
-                <ul className="export-details">
-                  {line.details.map((detail) => (
-                    <li key={detail}>{detail}</li>
-                  ))}
-                </ul>
-              )}
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
   )
 }
 

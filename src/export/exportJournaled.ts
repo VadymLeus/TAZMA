@@ -131,6 +131,7 @@ export async function exportJournaled(
       commits: video.commits,
       commitMs: video.commitMs,
       checkpointMs: video.checkpointMs,
+      openMs: video.openMs,
       audioMs,
       videoMs,
       assembleMs,
@@ -161,6 +162,7 @@ export async function exportJournaled(
         rewrittenPackets: selective?.counts.rewritten ?? 0,
       },
       journal: report,
+      stages: video.stages,
       release: () => finished.discard(),
     }
   } catch (error) {

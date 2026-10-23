@@ -164,6 +164,59 @@ describe('FlowEstimator on a simulated pipeline', () => {
   })
 })
 
+describe('FlowEstimator measuring W0 a second time', () => {
+  const stages = [10, 10, 10, 10, 10]
+  // Every stage takes `slow` times as long for the first `frames` frames, as it
+  // does while the codecs and the machine start up.
+  const coldStart = (frames: number, slow: number) => (_stage: number, frame: number) => (frame < frames ? slow : 1)
+
+  it('measures W0 again when a cold start made the formula ask for as many frames as the probe used', () => {
+    const estimator = new FlowEstimator({ memoryLimit: 1000 })
+    const result = simulate(stages, 3000, estimator, 500, coldStart(16, 3.5))
+    assert.ok(Math.abs((estimator.firstLatency as number) - 0.175) < 0.01, `first ${estimator.firstLatency}`)
+    assert.ok(Math.abs((estimator.latency as number) - 0.05) < 0.005, `second ${estimator.latency}`)
+    assert.equal(estimator.phase, 'steady')
+    // λ = 100/s, W0 = 50 ms, δ = 25 %: 7, where the cold W0 gave 22.
+    assert.equal(estimator.settledLimit, 7)
+    assert.ok(result.tailRate >= 0.97 * bottleneck(stages))
+  })
+
+  it('leaves W0 as it was where the formula asks for fewer frames than the probe used', () => {
+    const estimator = new FlowEstimator({ memoryLimit: 1000 })
+    simulate(stages, 600, estimator)
+    assert.equal(estimator.firstLatency, null)
+    assert.ok(Math.abs((estimator.latency as number) - 0.05) < 0.002)
+  })
+
+  it('does not measure again when the memory is under the depth of the probe, which sets the limit then', () => {
+    const estimator = new FlowEstimator({ memoryLimit: 12 })
+    simulate(stages, 3000, estimator, 500, coldStart(16, 3.5))
+    assert.equal(estimator.firstLatency, null)
+    assert.ok((estimator.latency as number) > 0.15)
+    assert.equal(estimator.settledLimit, 12)
+  })
+
+  it('keeps the same W0 when the second measurement agrees, and does it only once', () => {
+    // 14 stages of 10 ms: W0 = 140 ms is real, and the formula asks for 18.
+    const long = Array<number>(14).fill(10)
+    const estimator = new FlowEstimator({ memoryLimit: 1000, reprobeEvery: 300, reprobeSeconds: 0 })
+    const result = simulate(long, 4000, estimator, 500)
+    assert.ok(Math.abs((estimator.firstLatency as number) - 0.14) < 0.005)
+    assert.ok(Math.abs((estimator.latency as number) - 0.14) < 0.005)
+    assert.equal(estimator.settledLimit, 18)
+    assert.equal(estimator.phase, 'steady')
+    assert.ok(result.tailRate >= 0.97 * bottleneck(long))
+  })
+
+  it('never raises W0', () => {
+    // The second measurement lands on a slower stretch than the first.
+    const slowerLater = (_stage: number, frame: number) => (frame >= 80 && frame < 140 ? 2 : 1)
+    const estimator = new FlowEstimator({ memoryLimit: 1000 })
+    simulate(Array<number>(14).fill(10), 600, estimator, 100, slowerLater)
+    assert.ok((estimator.latency as number) <= (estimator.firstLatency as number) + 1e-9)
+  })
+})
+
 describe('FlowEstimator feedback on the limit', () => {
   const stages = [8, 6, 10, 6, 8]
   // The first stage is 1.7 times slower while fewer than 26 frames are inside:
@@ -250,6 +303,38 @@ describe('FlowEstimator feedback on the limit', () => {
     assert.ok(estimator.feedback.tried >= 1 && estimator.feedback.tried <= 8, `${estimator.feedback.tried} tries`)
     assert.equal(estimator.settledLimit, 7)
     assert.ok(result.tailRate >= 0.97 * bottleneck([10, 10, 10, 10, 10]))
+  })
+
+  it('does not try a depth the probe has already been to, while the limit in force keeps the rate it saw', () => {
+    // Memory for 16 frames, which is the depth of the probe, so a try would
+    // only go where the probe went. No new probe, which goes there too.
+    const estimator = new FlowEstimator({ memoryLimit: 16, reprobeEvery: 1_000_000 })
+    const result = simulate([10, 10, 10, 10, 10], 20000, estimator)
+    assert.equal(estimator.feedback.tried, 0)
+    assert.equal(estimator.settledLimit, 7)
+    assert.ok(Math.abs((estimator.probeRate as number) - 100) < 3, `probe rate ${estimator.probeRate}`)
+    // Past the probe the limit never goes above the one the formula gave.
+    assert.equal(Math.max(...result.limits.slice(100)), 7)
+    assert.ok(result.tailRate >= 0.97 * bottleneck([10, 10, 10, 10, 10]))
+    // The rate at the limit in force is still measured, and written down.
+    assert.ok(estimator.feedback.trials.length >= 2)
+    assert.ok(estimator.feedback.trials.every((item) => item.limit === 7))
+  })
+
+  it('still tries that depth when the rate has fallen below what the probe saw', () => {
+    const slower = (_stage: number, frame: number) => (frame >= 600 ? 1.25 : 1)
+    const estimator = new FlowEstimator({ memoryLimit: 16 })
+    simulate([10, 10, 10, 10, 10], 6000, estimator, 200, slower)
+    assert.ok(estimator.feedback.tried >= 1, `${estimator.feedback.tried} tries`)
+    assert.ok(estimator.feedback.trials.some((item) => item.limit === 16))
+    assert.equal(estimator.feedback.kept, 0)
+  })
+
+  it('tries a depth past the probe even when the rate holds', () => {
+    const estimator = new FlowEstimator({ memoryLimit: 40 })
+    simulate([10, 10, 10, 10, 10], 6000, estimator)
+    assert.ok(estimator.feedback.tried >= 1)
+    assert.ok(estimator.feedback.trials.some((item) => item.limit === 40))
   })
 
   it('does not try at all while the frames in flight stay under the limit', () => {

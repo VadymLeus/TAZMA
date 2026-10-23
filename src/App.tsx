@@ -113,8 +113,11 @@ export default function App() {
     <div className="app">
       <header className="app-header">
         <span className="brand">TAZMA</span>
-        <span className="stage">Етап 7 · відновлення</span>
+        <span className="stage">Етап 8 · заміри</span>
         <div className="header-actions">
+          <a className="btn header-action" href="?stand" title="Сторінка, що виконує серії експортів і збирає числа для замірів">
+            Стенд замірів
+          </a>
           {waiting > 0 && (
             <button
               type="button"

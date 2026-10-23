@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import { FrameCounter } from '../src/diagnostics/frameCounter.ts'
-import { MemoryRecorder, mergePairs, traceToCsv } from '../src/diagnostics/memoryTrace.ts'
+import { MemoryRecorder, mergePairs, peakMoment, traceToCsv } from '../src/diagnostics/memoryTrace.ts'
 import type { MemoryPoint } from '../src/diagnostics/memoryTrace.ts'
 
 function setup(maxPoints?: number) {
@@ -179,5 +179,32 @@ describe('MemoryRecorder with a frame limit', () => {
       framesLeft: 0,
     })
     assert.equal(csv.split('\n')[1], '1;0;1;1;;;2')
+  })
+})
+
+describe('peakMoment', () => {
+  const point = (ms: number, frames: number, limit: number | null): MemoryPoint => ({
+    ms,
+    time: ms / 1000,
+    frames,
+    frameBytes: frames * 10,
+    heapBytes: null,
+    limit,
+    credits: null,
+  })
+
+  it('names the first reading that reached the peak and the limit then', () => {
+    const points = [point(100, 2, 1), point(200, 9, 16), point(300, 9, 6), point(400, 4, 6)]
+    assert.deepEqual(peakMoment({ points, peakFrames: 9 }), { ms: 200, limit: 16 })
+  })
+
+  it('gives the limit as null where there was none', () => {
+    assert.deepEqual(peakMoment({ points: [point(50, 3, null)], peakFrames: 3 }), { ms: 50, limit: null })
+  })
+
+  it('is null without readings or without frames', () => {
+    assert.equal(peakMoment({ points: [], peakFrames: 5 }), null)
+    assert.equal(peakMoment({ points: [point(10, 0, null)], peakFrames: 0 }), null)
+    assert.equal(peakMoment({ points: undefined as unknown as MemoryPoint[], peakFrames: 5 }), null)
   })
 })

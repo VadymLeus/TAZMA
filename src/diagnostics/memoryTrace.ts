@@ -89,6 +89,14 @@ export class MemoryRecorder {
   }
 }
 
+// When the most frames were open for the first time, in milliseconds since the
+// start, and the limit in force then (null without one). Null where no reading
+// reached the peak, which is the case for a trace without readings.
+export function peakMoment(trace: Pick<MemoryTrace, 'points' | 'peakFrames'>): { ms: number; limit: number | null } | null {
+  const point = trace.points?.find((item) => item.frames >= trace.peakFrames && trace.peakFrames > 0)
+  return point ? { ms: point.ms, limit: point.limit } : null
+}
+
 const higher = (a: number | null, b: number | null): number | null =>
   a === null ? b : b === null ? a : Math.max(a, b)
 

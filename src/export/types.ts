@@ -6,6 +6,7 @@ import type { FlowControl, FlowReport } from '../pipeline/flowControl.ts'
 import type { ProjectState } from '../project/types.ts'
 import type { JournalStore } from '../resume/store.ts'
 import type { ExportAttempt, FailedAttempt } from './attempts.ts'
+import type { StageTimes } from './stageTimes.ts'
 
 // Containers the video encoders write into; GIF has its own encoder.
 export type VideoContainer = 'mp4' | 'webm'
@@ -100,6 +101,10 @@ export interface JournalReport {
   // altogether (the encoder's last frames included), in milliseconds.
   commitMs: number
   checkpointMs: number
+  // Time spent opening the part that follows a closed one (its file and its
+  // encoder session), in milliseconds; missing in reports made before it was
+  // measured.
+  openMs?: number
   // Time of the stages of this run, in milliseconds.
   audioMs: number
   videoMs: number
@@ -134,6 +139,8 @@ export interface ExportResult {
   memory?: MemoryTrace | null
   // Set when the export went through a journal.
   journal?: JournalReport | null
+  // Where the time of the frame loop went, when the export measured it.
+  stages?: StageTimes | null
   // Frees the file when the result is no longer needed.
   release: () => Promise<void>
 }

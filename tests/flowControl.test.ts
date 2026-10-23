@@ -298,15 +298,88 @@ describe('decoder gate', () => {
 describe('stalls', () => {
   it('lends a credit when a decoder holds frames back until it sees more packets', () => {
     const { flow, clock, decoder, real } = setup(1, 2)
-    feed(decoder, 4)
+    feed(decoder, 6)
     assert.equal(real.inbox.length, 1)
-    clock.advance(300)
+    clock.advance(75)
+    assert.equal(real.inbox.length, 1)
+    clock.advance(25)
     assert.equal(real.inbox.length, 2)
-    clock.advance(300)
-    assert.equal(real.inbox.length, 3)
-    assert.equal(flow.report().borrowed, 2)
-    assert.equal(flow.report().floor, 3)
+    assert.equal(flow.report().borrowed, 1)
+    assert.equal(flow.report().floor, 2)
     flow.uninstall()
+  })
+
+  it('lends twice as many credits at each stall that follows without progress', () => {
+    const { flow, clock, decoder, real } = setup(1, 1000)
+    feed(decoder, 40)
+    const sizes: number[] = []
+    for (let i = 0; i < 4; i++) {
+      clock.advance(100)
+      sizes.push(real.inbox.length)
+    }
+    assert.deepEqual(sizes, [2, 4, 8, 16])
+    assert.equal(flow.report().borrowed, 15)
+    assert.equal(flow.report().floor, 16)
+    flow.uninstall()
+  })
+
+  it('does not lend more than eight credits at once', () => {
+    const { flow, clock, decoder, real } = setup(1, 1000)
+    feed(decoder, 40)
+    clock.advance(500)
+    assert.equal(real.inbox.length, 24)
+    assert.equal(flow.report().borrowed, 23)
+    flow.uninstall()
+  })
+
+  it('goes back to one credit when something moves', () => {
+    const { flow, clock, decoder, real } = setup(1, 1000)
+    feed(decoder, 40)
+    clock.advance(200)
+    assert.equal(real.inbox.length, 4)
+    flow.progress()
+    clock.advance(100)
+    assert.equal(real.inbox.length, 5)
+    flow.uninstall()
+  })
+
+  it('does not count the time before the first packet as a stall', () => {
+    const { flow, clock, decoder, real } = setup(1, 2)
+    clock.advance(5000)
+    feed(decoder, 6)
+    clock.advance(100)
+    assert.equal(real.inbox.length, 2)
+    flow.uninstall()
+  })
+
+  it('does not count the time the pipeline stood empty as the pace of the frames', () => {
+    const { flow, clock, decoder, real } = setup(1)
+    feed(decoder, 2)
+    real.produce(1)[0]?.close()
+    real.produce(1)[0]?.close()
+    assert.equal(flow.pool.inFlight, 0)
+    clock.advance(5000)
+    feed(decoder, 3)
+    clock.advance(100)
+    assert.equal(real.inbox.length, 2)
+    flow.uninstall()
+  })
+
+  it('gets the first frame out of a deep decoder soon, whatever came before the first packet', () => {
+    for (const before of [0, 300, 800]) {
+      const { flow, clock, decoder, real } = setup(2, 5)
+      clock.advance(before)
+      feed(decoder, 40)
+      let first = -1
+      for (let step = 0; step < 80 && first < 0; step++) {
+        clock.advance(25)
+        const frames = real.produce(10)
+        if (frames.length > 0) first = step * 25 + 25
+        for (const frame of frames) frame.close()
+      }
+      assert.ok(first > 0 && first <= 400, `${before} ms before: ${first} ms`)
+      flow.uninstall()
+    }
   })
 
   it('remembers the depth that was needed', () => {
@@ -390,6 +463,37 @@ describe('auto mode', () => {
     assert.ok(sent >= 12)
     assert.notEqual(report.latencyMs, null)
     assert.ok(Math.abs((report.latencyMs as number) - 30) < 1)
+    flow.uninstall()
+  })
+
+  it('measures W0 a second time when a slow start made it ask for as many frames as the probe used, and keeps the frames coming', () => {
+    FakeDecoder.reorder = 0
+    FakeDecoder.made = []
+    const clock = new ManualClock()
+    const flow = new FlowControl({ ...config(1), mode: 'auto' }, clock)
+    const host = { VideoDecoder: FakeDecoder as unknown as new (...args: any[]) => any }
+    flow.install(host)
+    const decoder = new host.VideoDecoder({ output: () => {} })
+    const real = FakeDecoder.made[0] as FakeDecoder
+    feed(decoder, 2)
+    let sent = 0
+    // 200 ms a frame for the first 14, 10 ms after: W0 = 200 ms, λ = 100 a second.
+    for (let i = 0; i < 400; i++) {
+      clock.advance(i < 14 ? 200 : 10)
+      for (const frame of real.produce(1)) {
+        frame.close()
+        sent++
+      }
+      feed(decoder, 1)
+    }
+    const report = flow.report()
+    assert.ok(sent >= 380, `${sent} frames came out`)
+    assert.equal(report.phase, 'steady')
+    // The slow start made the watchdog lend a credit, so two frames were inside
+    // and the first W0 came out as two frame times.
+    assert.ok((report.firstLatencyMs as number) > 300, `first ${report.firstLatencyMs}`)
+    assert.ok((report.latencyMs as number) < 40, `second ${report.latencyMs}`)
+    assert.ok(report.limit < 8, `limit ${report.limit}`)
     flow.uninstall()
   })
 })

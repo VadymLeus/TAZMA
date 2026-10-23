@@ -180,6 +180,45 @@ describe('runParts', () => {
     assert.equal(w.closed.count, w.items.filter((i) => i.kind === 'frame').length)
   })
 
+  it('counts the time to open the parts that follow a closed one, and none for a timeline of one part', async () => {
+    const w = world(MIXED)
+    const many = await runParts(args(memoryStore(), empty(w.total, 5), itemsFrom(w, 0), newSpy()))
+    assert.ok(many.commits > 1)
+    assert.ok(Number.isFinite(many.openMs) && many.openMs >= 0)
+    const single = world(MIXED)
+    const whole = await runParts(args(memoryStore(), empty(single.total, 1000), itemsFrom(single, 0), newSpy()))
+    assert.equal(whole.commits, 1)
+    assert.equal(whole.openMs, 0)
+  })
+
+  it('tells where the time of the loop went: waiting for items, what the engine added, the first frame', async () => {
+    const w = world(MIXED)
+    const timed: Engine = {
+      async open(emit, stages) {
+        const inner = await fakeEngine(newSpy()).open(emit, stages)
+        return {
+          ...inner,
+          async add(item, duration) {
+            stages.composeMs += 2
+            stages.encodeMs += 3
+            await inner.add(item, duration)
+          },
+        }
+      },
+    }
+    const result = await runParts(args(memoryStore(), empty(w.total, 5), itemsFrom(w, 0), newSpy(), { engine: timed }))
+    assert.equal(result.stages.composeMs, 2 * result.frames)
+    assert.equal(result.stages.encodeMs, 3 * result.frames)
+    assert.ok(Number.isFinite(result.stages.waitMs) && result.stages.waitMs >= 0)
+    const first = result.stages.firstFrameMs
+    assert.ok(first !== null && first >= 0)
+
+    const copied = world([{ kind: 'copy', from: 0, to: 10 }])
+    const none = await runParts(args(memoryStore(), empty(copied.total, 5), itemsFrom(copied, 0), newSpy()))
+    assert.equal(none.stages.firstFrameMs, null)
+    assert.equal(none.stages.composeMs, 0)
+  })
+
   it('never writes a session’s packets after the copied packet that follows it', async () => {
     const w = world([
       { kind: 'recode', from: 0, to: 3 },

@@ -16,9 +16,12 @@ const report = (patch: Partial<FlowReport> = {}): FlowReport => ({
   trials: [],
   rate: 258.4,
   latencyMs: 8.46,
+  probeRate: 262.1,
+  firstLatencyMs: null,
   margin: 0.25,
   budgetBytes: 268435456,
   frameBytes: 1382400,
+  fixedBytes: 7372800,
   peak: 16,
   floor: 1,
   borrowed: 0,
@@ -61,10 +64,38 @@ describe('flowRows', () => {
     assert.equal(rows[1]?.[1], 'λ ≈ 258 кадр/с, W₀ ≈ 42 мс, запас δ = 25 %')
   })
 
+  it('says that W0 was measured a second time, and what the first measurement gave', () => {
+    const rows = flowRows(report({ latencyMs: 36.2, firstLatencyMs: 116.2 }))
+    assert.equal(
+      rows[1]?.[1],
+      'λ ≈ 258 кадр/с, W₀ ≈ 36 мс (перший замір 116 мс, виміряно вдруге на прогрітому конвеєрі), запас δ = 25 %',
+    )
+  })
+
   it('says so when the export was too short to measure', () => {
     const rows = flowRows(report({ rate: null, latencyMs: null, byThroughput: null }))
     assert.equal(rows[0]?.[1], 'Авто: N = 3 (за пам’яттю 194)')
     assert.equal(rows[1]?.[1], 'експорт був надто коротким для виміру')
+  })
+
+  it('says so when the budget does not even cover the encoder pictures and one frame', () => {
+    const tight = { budgetBytes: 64 * 1024 * 1024, frameBytes: 12441600, fixedBytes: 66355200, byMemory: 1, limit: 1 }
+    const rows = flowRows(report(tight))
+    assert.deepEqual(rows[1], [
+      'Бюджет',
+      '64.0 МБ замало: два кадри кодувальника займають 63.3 МБ, ще кадр – 11.9 МБ',
+    ])
+    assert.equal(rows[0]?.[1], 'Авто: N = 1 (за пам’яттю 1, за швидкістю 3)')
+  })
+
+  it('stays quiet about the budget when one frame fits after the encoder pictures', () => {
+    const rows = flowRows(report({ budgetBytes: 128 * 1024 * 1024, frameBytes: 12441600, fixedBytes: 66355200 }))
+    assert.ok(rows.every(([label]) => label !== 'Бюджет'))
+  })
+
+  it('does not mention the budget in the fixed mode, which ignores it', () => {
+    const rows = flowRows(report({ mode: 'fixed', budgetBytes: 1, limit: 4, peak: 4 }))
+    assert.ok(rows.every(([label]) => label !== 'Бюджет'))
   })
 
   it('shows a fixed limit as chosen', () => {
